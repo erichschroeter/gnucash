@@ -1,8 +1,9 @@
 [workspace]
 members = [
+    "gnc-kvp",
     "gnc",
     "gnc-xml",
     "gnc-engine",
     "gnc-numeric",
-    "gnc-guid", "gnc-engine", "gnc-xml", "gnc",
+    "gnc-guid", "gnc-engine", "gnc-xml", "gnc", "gnc-kvp",
 ]

@@ -1,11 +1,11 @@
 [package]
-name = "gnc-engine"
+name = "gnc-kvp"
 version = "0.1.0"
 edition = "2021"
 
 [dependencies]
 gnc-guid = { path = "../gnc-guid" }
 gnc-numeric = { path = "../gnc-numeric" }
-gnc-kvp = { path = "../gnc-kvp" }
 serde = { version = "1.0", features = ["derive"] }
 chrono = { version = "0.4", features = ["serde"] }
+thiserror = "2.0"

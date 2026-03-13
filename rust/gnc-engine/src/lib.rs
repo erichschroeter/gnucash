@@ -1,5 +1,6 @@
 use chrono::{DateTime, Utc};
 use gnc_guid::GncGUID;
+use gnc_kvp::KvpFrame;
 use gnc_numeric::{GncNumeric, GncNumericDenom, GncNumericRounding};
 use serde::{Deserialize, Serialize};
 use std::collections::{HashMap, HashSet};
@@ -29,6 +30,8 @@ pub struct Account {
     pub id: GncGUID,
     pub account_type: AccountType,
     pub parent_id: Option<GncGUID>,
+    #[serde(default)]
+    pub kvp: KvpFrame,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -38,6 +41,8 @@ pub struct Split {
     pub value: GncNumeric,
     pub quantity: GncNumeric,
     pub reconciled: char,
+    #[serde(default)]
+    pub kvp: KvpFrame,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -46,6 +51,8 @@ pub struct Transaction {
     pub date_posted: DateTime<Utc>,
     pub description: String,
     pub splits: Vec<Split>,
+    #[serde(default)]
+    pub kvp: KvpFrame,
 }
 
 #[derive(Debug, Default, Serialize, Deserialize)]
@@ -57,6 +64,9 @@ pub struct Book {
     /// Optimization: Index of transaction IDs by Account ID
     #[serde(skip)]
     account_index: HashMap<GncGUID, Vec<GncGUID>>,
+
+    #[serde(default)]
+    pub kvp: KvpFrame,
 }
 
 impl Book {
@@ -66,6 +76,7 @@ impl Book {
             accounts: HashMap::new(),
             transactions: HashMap::new(),
             account_index: HashMap::new(),
+            kvp: KvpFrame::new(),
         }
     }
 
@@ -222,6 +233,7 @@ impl Book {
 mod tests {
     use super::*;
     use chrono::TimeZone;
+    use gnc_kvp::KvpValue;
     use std::time::Instant;
 
     #[test]
@@ -233,6 +245,7 @@ mod tests {
             id: root_id,
             account_type: AccountType::ROOT,
             parent_id: None,
+            kvp: KvpFrame::new(),
         };
         book.add_account(root);
 
@@ -242,6 +255,7 @@ mod tests {
             id: bank_id,
             account_type: AccountType::BANK,
             parent_id: Some(root_id),
+            kvp: KvpFrame::new(),
         };
         book.add_account(bank);
 
@@ -262,12 +276,14 @@ mod tests {
             id: parent_id,
             account_type: AccountType::ASSET,
             parent_id: None,
+            kvp: KvpFrame::new(),
         });
         book.add_account(Account {
             name: "Bank".to_string(),
             id: child_id,
             account_type: AccountType::BANK,
             parent_id: Some(parent_id),
+            kvp: KvpFrame::new(),
         });
 
         book.add_transaction(Transaction {
@@ -280,12 +296,33 @@ mod tests {
                 value: GncNumeric::new(100, 1),
                 quantity: GncNumeric::new(100, 1),
                 reconciled: 'n',
+                kvp: KvpFrame::new(),
             }],
+            kvp: KvpFrame::new(),
         });
 
         assert_eq!(book.calculate_balance(child_id, false).num, 100);
         assert_eq!(book.calculate_balance(parent_id, false).num, 0);
         assert_eq!(book.calculate_balance(parent_id, true).num, 100);
+    }
+
+    #[test]
+    fn test_kvp_integration() {
+        let mut account = Account {
+            name: "Checking".to_string(),
+            id: GncGUID::new(),
+            account_type: AccountType::BANK,
+            parent_id: None,
+            kvp: KvpFrame::new(),
+        };
+        account
+            .kvp
+            .insert("color".to_string(), KvpValue::String("blue".to_string()));
+
+        assert_eq!(
+            account.kvp.get("color"),
+            Some(&KvpValue::String("blue".to_string()))
+        );
     }
 
     #[test]
@@ -299,12 +336,14 @@ mod tests {
             id: id1,
             account_type: AccountType::ASSET,
             parent_id: Some(id2),
+            kvp: KvpFrame::new(),
         });
         book.add_account(Account {
             name: "Account 2".to_string(),
             id: id2,
             account_type: AccountType::ASSET,
             parent_id: Some(id1),
+            kvp: KvpFrame::new(),
         });
 
         assert!(book.is_circular(id1));
@@ -315,7 +354,7 @@ mod tests {
     }
 
     #[test]
-    #[ignore] // Run with `cargo test -- --ignored`
+    #[ignore]
     fn test_large_book_performance() {
         let mut book = Book::new();
         let root_id = GncGUID::new();
@@ -324,6 +363,7 @@ mod tests {
             id: root_id,
             account_type: AccountType::ROOT,
             parent_id: None,
+            kvp: KvpFrame::new(),
         });
 
         // Create 100 accounts
@@ -335,6 +375,7 @@ mod tests {
                 id,
                 account_type: AccountType::BANK,
                 parent_id: Some(root_id),
+                kvp: KvpFrame::new(),
             });
             account_ids.push(id);
         }
@@ -353,7 +394,9 @@ mod tests {
                     value: GncNumeric::new(1, 1),
                     quantity: GncNumeric::new(1, 1),
                     reconciled: 'n',
+                    kvp: KvpFrame::new(),
                 }],
+                kvp: KvpFrame::new(),
             });
         }
         println!("Generation took: {:?}", start_gen.elapsed());
@@ -365,8 +408,6 @@ mod tests {
 
         println!("Balance calculation took: {:?}", elapsed);
         assert_eq!(balance.num, 100_000);
-
-        // With indexing, this should now be VERY fast (well under 100ms)
         assert!(
             elapsed.as_millis() < 100,
             "Performance too slow: {:?}",
@@ -392,6 +433,7 @@ mod tests {
                     value: GncNumeric::new(100, 1),
                     quantity: GncNumeric::new(100, 1),
                     reconciled: 'n',
+                    kvp: KvpFrame::new(),
                 },
                 Split {
                     id: GncGUID::new(),
@@ -399,8 +441,10 @@ mod tests {
                     value: GncNumeric::new(-100, 1),
                     quantity: GncNumeric::new(-100, 1),
                     reconciled: 'n',
+                    kvp: KvpFrame::new(),
                 },
             ],
+            kvp: KvpFrame::new(),
         };
         book.add_transaction(txn);
         assert!(book.is_transaction_balanced(txn_id));
@@ -415,6 +459,7 @@ mod tests {
             id,
             account_type: AccountType::BANK,
             parent_id: None,
+            kvp: KvpFrame::new(),
         });
 
         assert_eq!(book.find_accounts("SAVINGS").len(), 1);
