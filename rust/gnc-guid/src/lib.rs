@@ -1,8 +1,8 @@
-use uuid::Uuid;
+use serde::{Deserialize, Serialize};
 use std::fmt;
 use std::str::FromStr;
-use serde::{Serialize, Deserialize};
 use thiserror::Error;
+use uuid::Uuid;
 
 #[repr(C)]
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
@@ -14,7 +14,9 @@ impl GncGUID {
     /// Create a new, random GncGUID (corresponds to guid_new_return)
     pub fn new() -> Self {
         let id = Uuid::new_v4();
-        GncGUID { data: *id.as_bytes() }
+        GncGUID {
+            data: *id.as_bytes(),
+        }
     }
 
     /// Returns a GncGUID which is guaranteed to never reference any entity.

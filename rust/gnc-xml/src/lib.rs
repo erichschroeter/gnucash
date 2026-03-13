@@ -1,3 +1,4 @@
+use chrono::{DateTime, Utc};
 use flate2::read::GzDecoder;
 use gnc_engine::{Account, AccountType, Book, Split, Transaction};
 use gnc_guid::GncGUID;
@@ -8,18 +9,17 @@ use std::fs::File;
 use std::io::{BufReader, Read};
 use std::path::Path;
 use std::str::FromStr;
-use chrono::{DateTime, Utc};
 
 pub fn load_gnucash_file<P: AsRef<Path>>(path: P) -> Result<Book, Box<dyn std::error::Error>> {
     let file = File::open(path)?;
     let mut buf_reader = BufReader::new(file);
-    
+
     // Peek to see if it's gzipped
     let mut header = [0u8; 2];
     buf_reader.read_exact(&mut header)?;
-    
+
     let mut xml_content = Vec::new();
-    
+
     if header == [0x1f, 0x8b] {
         // Gzipped. We need to decode the whole file.
         // Reconstruct the stream with the header we already read.
@@ -41,7 +41,7 @@ pub fn parse_gnucash_xml(xml: &[u8]) -> Result<Book, Box<dyn std::error::Error>>
 
     let mut book = Book::new();
     let mut buf = Vec::new();
-    
+
     // Account state
     let mut in_account = false;
     let mut current_account_name = String::new();
@@ -100,7 +100,7 @@ pub fn parse_gnucash_xml(xml: &[u8]) -> Result<Book, Box<dyn std::error::Error>>
                         // For MVP we just use whatever comes first (posted usually comes first)
                         current_txn_date = parse_date(&reader.read_text(e.name())?)?;
                     }
-                    
+
                     b"trn:split" if in_transaction => {
                         in_split = true;
                         current_split_id = GncGUID::null();
@@ -119,7 +119,8 @@ pub fn parse_gnucash_xml(xml: &[u8]) -> Result<Book, Box<dyn std::error::Error>>
                         current_split_value = GncNumeric::from_str(&reader.read_text(e.name())?)?;
                     }
                     b"split:quantity" if in_split => {
-                        current_split_quantity = GncNumeric::from_str(&reader.read_text(e.name())?)?;
+                        current_split_quantity =
+                            GncNumeric::from_str(&reader.read_text(e.name())?)?;
                     }
                     b"split:reconciled-state" if in_split => {
                         let s = reader.read_text(e.name())?;
@@ -128,43 +129,41 @@ pub fn parse_gnucash_xml(xml: &[u8]) -> Result<Book, Box<dyn std::error::Error>>
                     _ => (),
                 }
             }
-            Ok(Event::End(ref e)) => {
-                match e.name().as_ref() {
-                    b"gnc:account" => {
-                        in_account = false;
-                        book.add_account(Account {
-                            name: current_account_name.clone(),
-                            id: current_account_id,
-                            account_type: current_account_type,
-                            parent_id: current_parent_id,
-                        });
-                        current_account_name.clear();
-                        current_account_id = GncGUID::null();
-                        current_account_type = AccountType::ASSET;
-                        current_parent_id = None;
-                    }
-                    b"trn:split" => {
-                        in_split = false;
-                        current_txn_splits.push(Split {
-                            id: current_split_id,
-                            account_id: current_split_account_id,
-                            value: current_split_value,
-                            quantity: current_split_quantity,
-                            reconciled: current_split_reconciled,
-                        });
-                    }
-                    b"gnc:transaction" => {
-                        in_transaction = false;
-                        book.add_transaction(Transaction {
-                            id: current_txn_id,
-                            date_posted: current_txn_date,
-                            description: current_txn_description.clone(),
-                            splits: current_txn_splits.clone(),
-                        });
-                    }
-                    _ => (),
+            Ok(Event::End(ref e)) => match e.name().as_ref() {
+                b"gnc:account" => {
+                    in_account = false;
+                    book.add_account(Account {
+                        name: current_account_name.clone(),
+                        id: current_account_id,
+                        account_type: current_account_type,
+                        parent_id: current_parent_id,
+                    });
+                    current_account_name.clear();
+                    current_account_id = GncGUID::null();
+                    current_account_type = AccountType::ASSET;
+                    current_parent_id = None;
                 }
-            }
+                b"trn:split" => {
+                    in_split = false;
+                    current_txn_splits.push(Split {
+                        id: current_split_id,
+                        account_id: current_split_account_id,
+                        value: current_split_value,
+                        quantity: current_split_quantity,
+                        reconciled: current_split_reconciled,
+                    });
+                }
+                b"gnc:transaction" => {
+                    in_transaction = false;
+                    book.add_transaction(Transaction {
+                        id: current_txn_id,
+                        date_posted: current_txn_date,
+                        description: current_txn_description.clone(),
+                        splits: current_txn_splits.clone(),
+                    });
+                }
+                _ => (),
+            },
             Ok(Event::Eof) => break,
             Err(e) => return Err(Box::new(e)),
             _ => (),
@@ -241,7 +240,7 @@ mod tests {
         let book = parse_gnucash_xml(xml.as_bytes()).unwrap();
         assert_eq!(book.accounts.len(), 2);
         assert_eq!(book.transactions.len(), 1);
-        
+
         let txn = book.list_transactions()[0];
         assert_eq!(txn.description, "The Home Depot");
         assert_eq!(txn.splits.len(), 1);

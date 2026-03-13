@@ -1,4 +1,4 @@
-use serde::{Serialize, Deserialize};
+use serde::{Deserialize, Serialize};
 use std::str::FromStr;
 
 #[repr(C)]
@@ -18,7 +18,11 @@ impl GncNumeric {
     }
 
     pub fn to_f64(&self) -> f64 {
-        if self.denom == 0 { 0.0 } else { self.num as f64 / self.denom as f64 }
+        if self.denom == 0 {
+            0.0
+        } else {
+            self.num as f64 / self.denom as f64
+        }
     }
 
     pub fn check(&self) -> GncNumericErrorCode {
@@ -36,7 +40,10 @@ impl GncNumeric {
     }
 
     pub fn error(code: GncNumericErrorCode) -> Self {
-        GncNumeric { num: code as i64, denom: 0 }
+        GncNumeric {
+            num: code as i64,
+            denom: 0,
+        }
     }
 
     /// Internal helper for GCD
@@ -52,14 +59,18 @@ impl GncNumeric {
 
     /// Internal helper for LCM
     fn lcm(a: i128, b: i128) -> i128 {
-        if a == 0 || b == 0 { return 0; }
+        if a == 0 || b == 0 {
+            return 0;
+        }
         let g = Self::gcd(a, b);
         (a / g * b).abs()
     }
 
     pub fn reduce(mut self) -> Self {
         let check = self.check();
-        if check != GncNumericErrorCode::Ok { return self; }
+        if check != GncNumericErrorCode::Ok {
+            return self;
+        }
         if self.num == 0 {
             self.denom = 1;
             return self;
@@ -75,14 +86,22 @@ impl GncNumeric {
     }
 
     /// Core rounding logic: divides num by denom using the specified mode.
-    fn div_round(num: i128, denom: i128, how: GncNumericRounding) -> Result<i64, GncNumericErrorCode> {
-        if denom == 0 { return Err(GncNumericErrorCode::Arg); }
-        
+    fn div_round(
+        num: i128,
+        denom: i128,
+        how: GncNumericRounding,
+    ) -> Result<i64, GncNumericErrorCode> {
+        if denom == 0 {
+            return Err(GncNumericErrorCode::Arg);
+        }
+
         let quotient = num / denom;
         let remainder = num % denom;
 
         if remainder == 0 {
-            return quotient.try_into().map_err(|_| GncNumericErrorCode::Overflow);
+            return quotient
+                .try_into()
+                .map_err(|_| GncNumericErrorCode::Overflow);
         }
 
         if how == GncNumericRounding::Never {
@@ -91,36 +110,62 @@ impl GncNumeric {
 
         let result = match how {
             GncNumericRounding::Floor => {
-                if (num < 0) ^ (denom < 0) { quotient - 1 } else { quotient }
+                if (num < 0) ^ (denom < 0) {
+                    quotient - 1
+                } else {
+                    quotient
+                }
             }
             GncNumericRounding::Ceil => {
-                if (num < 0) ^ (denom < 0) { quotient } else { quotient + 1 }
+                if (num < 0) ^ (denom < 0) {
+                    quotient
+                } else {
+                    quotient + 1
+                }
             }
             GncNumericRounding::Trunc => quotient,
             GncNumericRounding::Promote => {
-                if (num < 0) ^ (denom < 0) { quotient - 1 } else { quotient + 1 }
+                if (num < 0) ^ (denom < 0) {
+                    quotient - 1
+                } else {
+                    quotient + 1
+                }
             }
-            GncNumericRounding::RoundHalfDown | GncNumericRounding::RoundHalfUp | GncNumericRounding::Round => {
+            GncNumericRounding::RoundHalfDown
+            | GncNumericRounding::RoundHalfUp
+            | GncNumericRounding::Round => {
                 let abs_rem = remainder.abs();
                 let abs_denom = denom.abs();
 
                 if abs_rem * 2 < abs_denom {
                     quotient
                 } else if abs_rem * 2 > abs_denom {
-                    if (num < 0) ^ (denom < 0) { quotient - 1 } else { quotient + 1 }
+                    if (num < 0) ^ (denom < 0) {
+                        quotient - 1
+                    } else {
+                        quotient + 1
+                    }
                 } else {
                     // It's exactly half
                     match how {
                         GncNumericRounding::RoundHalfDown => quotient,
                         GncNumericRounding::RoundHalfUp => {
-                            if (num < 0) ^ (denom < 0) { quotient - 1 } else { quotient + 1 }
+                            if (num < 0) ^ (denom < 0) {
+                                quotient - 1
+                            } else {
+                                quotient + 1
+                            }
                         }
                         GncNumericRounding::Round => {
                             // Banker's Rounding: to nearest even
                             if quotient % 2 == 0 {
                                 quotient
                             } else {
-                                if (num < 0) ^ (denom < 0) { quotient - 1 } else { quotient + 1 }
+                                if (num < 0) ^ (denom < 0) {
+                                    quotient - 1
+                                } else {
+                                    quotient + 1
+                                }
                             }
                         }
                         _ => unreachable!(),
@@ -133,9 +178,19 @@ impl GncNumeric {
         result.try_into().map_err(|_| GncNumericErrorCode::Overflow)
     }
 
-    pub fn add(a: Self, b: Self, denom: i64, how_rnd: GncNumericRounding, how_denom: GncNumericDenom) -> Self {
-        if a.check() != GncNumericErrorCode::Ok { return a; }
-        if b.check() != GncNumericErrorCode::Ok { return b; }
+    pub fn add(
+        a: Self,
+        b: Self,
+        denom: i64,
+        how_rnd: GncNumericRounding,
+        how_denom: GncNumericDenom,
+    ) -> Self {
+        if a.check() != GncNumericErrorCode::Ok {
+            return a;
+        }
+        if b.check() != GncNumericErrorCode::Ok {
+            return b;
+        }
 
         let exact_denom = Self::lcm(a.denom as i128, b.denom as i128);
         let num_a = a.num as i128 * (exact_denom / a.denom as i128);
@@ -150,7 +205,9 @@ impl GncNumeric {
                 }
                 GncNumericDenom::Lcd => exact_denom as i64,
                 GncNumericDenom::Fixed => {
-                    if a.denom != b.denom { return Self::error(GncNumericErrorCode::DenomDiff); }
+                    if a.denom != b.denom {
+                        return Self::error(GncNumericErrorCode::DenomDiff);
+                    }
                     a.denom
                 }
                 _ => exact_denom as i64,
@@ -163,19 +220,45 @@ impl GncNumeric {
         match Self::div_round(final_num, exact_denom, how_rnd) {
             Ok(n) => {
                 let res = GncNumeric::new(n, target_denom);
-                if how_denom == GncNumericDenom::Reduce { res.reduce() } else { res }
+                if how_denom == GncNumericDenom::Reduce {
+                    res.reduce()
+                } else {
+                    res
+                }
             }
             Err(e) => Self::error(e),
         }
     }
 
-    pub fn sub(a: Self, b: Self, denom: i64, how_rnd: GncNumericRounding, how_denom: GncNumericDenom) -> Self {
-        Self::add(a, GncNumeric::new(-b.num, b.denom), denom, how_rnd, how_denom)
+    pub fn sub(
+        a: Self,
+        b: Self,
+        denom: i64,
+        how_rnd: GncNumericRounding,
+        how_denom: GncNumericDenom,
+    ) -> Self {
+        Self::add(
+            a,
+            GncNumeric::new(-b.num, b.denom),
+            denom,
+            how_rnd,
+            how_denom,
+        )
     }
 
-    pub fn mul(a: Self, b: Self, denom: i64, how_rnd: GncNumericRounding, how_denom: GncNumericDenom) -> Self {
-        if a.check() != GncNumericErrorCode::Ok { return a; }
-        if b.check() != GncNumericErrorCode::Ok { return b; }
+    pub fn mul(
+        a: Self,
+        b: Self,
+        denom: i64,
+        how_rnd: GncNumericRounding,
+        how_denom: GncNumericDenom,
+    ) -> Self {
+        if a.check() != GncNumericErrorCode::Ok {
+            return a;
+        }
+        if b.check() != GncNumericErrorCode::Ok {
+            return b;
+        }
 
         let exact_num = a.num as i128 * b.num as i128;
         let exact_denom = a.denom as i128 * b.denom as i128;
@@ -196,7 +279,11 @@ impl GncNumeric {
         match Self::div_round(final_num, exact_denom, how_rnd) {
             Ok(n) => {
                 let res = GncNumeric::new(n, target_denom);
-                if how_denom == GncNumericDenom::Reduce { res.reduce() } else { res }
+                if how_denom == GncNumericDenom::Reduce {
+                    res.reduce()
+                } else {
+                    res
+                }
             }
             Err(e) => Self::error(e),
         }
@@ -286,16 +373,28 @@ mod tests {
     #[test]
     fn test_bankers_rounding() {
         // 2.5 rounds to 2
-        assert_eq!(GncNumeric::div_round(5, 2, GncNumericRounding::Round).unwrap(), 2);
+        assert_eq!(
+            GncNumeric::div_round(5, 2, GncNumericRounding::Round).unwrap(),
+            2
+        );
         // 3.5 rounds to 4
-        assert_eq!(GncNumeric::div_round(7, 2, GncNumericRounding::Round).unwrap(), 4);
+        assert_eq!(
+            GncNumeric::div_round(7, 2, GncNumericRounding::Round).unwrap(),
+            4
+        );
     }
 
     #[test]
     fn test_add_simple() {
         let a = GncNumeric::new(1, 2);
         let b = GncNumeric::new(1, 4);
-        let res = GncNumeric::add(a, b, GNC_DENOM_AUTO, GncNumericRounding::Never, GncNumericDenom::Reduce);
+        let res = GncNumeric::add(
+            a,
+            b,
+            GNC_DENOM_AUTO,
+            GncNumericRounding::Never,
+            GncNumericDenom::Reduce,
+        );
         assert_eq!(res.num, 3);
         assert_eq!(res.denom, 4);
     }
@@ -304,7 +403,13 @@ mod tests {
     fn test_sub_simple() {
         let a = GncNumeric::new(1, 2);
         let b = GncNumeric::new(1, 4);
-        let res = GncNumeric::sub(a, b, GNC_DENOM_AUTO, GncNumericRounding::Never, GncNumericDenom::Reduce);
+        let res = GncNumeric::sub(
+            a,
+            b,
+            GNC_DENOM_AUTO,
+            GncNumericRounding::Never,
+            GncNumericDenom::Reduce,
+        );
         assert_eq!(res.num, 1);
         assert_eq!(res.denom, 4);
     }
@@ -313,7 +418,13 @@ mod tests {
     fn test_mul_simple() {
         let a = GncNumeric::new(1, 2);
         let b = GncNumeric::new(1, 2);
-        let res = GncNumeric::mul(a, b, GNC_DENOM_AUTO, GncNumericRounding::Never, GncNumericDenom::Reduce);
+        let res = GncNumeric::mul(
+            a,
+            b,
+            GNC_DENOM_AUTO,
+            GncNumericRounding::Never,
+            GncNumericDenom::Reduce,
+        );
         assert_eq!(res.num, 1);
         assert_eq!(res.denom, 4);
     }

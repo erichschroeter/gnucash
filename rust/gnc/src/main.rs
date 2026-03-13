@@ -42,7 +42,7 @@ enum AccountActions {
         /// Include sub-account balances
         #[arg(short, long)]
         recursive: bool,
-    }
+    },
 }
 
 #[derive(Subcommand)]
@@ -120,7 +120,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             TransactionActions::Ls { path, account } => {
                 let book = load_gnucash_file(path)?;
                 let mut table = Table::new();
-                
+
                 let filter_account_ids: Vec<_> = if let Some(q) = account {
                     let accs = book.find_accounts(q);
                     if accs.is_empty() {
@@ -135,13 +135,22 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                 if filter_account_ids.is_empty() {
                     table.set_header(vec!["Date", "Description", "Value", "Splits"]);
                 } else {
-                    table.set_header(vec!["Date", "Description", "Transfer", "Amount", "Balance", "R"]);
+                    table.set_header(vec![
+                        "Date",
+                        "Description",
+                        "Transfer",
+                        "Amount",
+                        "Balance",
+                        "R",
+                    ]);
                 }
 
                 let mut txns: Vec<_> = book.list_transactions();
                 if !filter_account_ids.is_empty() {
                     txns.retain(|txn| {
-                        txn.splits.iter().any(|s| filter_account_ids.contains(&s.account_id))
+                        txn.splits
+                            .iter()
+                            .any(|s| filter_account_ids.contains(&s.account_id))
                     });
                 }
 
@@ -151,7 +160,9 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
                 for txn in txns {
                     if filter_account_ids.is_empty() {
-                        let total_value: f64 = txn.splits.iter()
+                        let total_value: f64 = txn
+                            .splits
+                            .iter()
                             .filter(|s| s.value.num > 0)
                             .map(|s| s.value.to_f64())
                             .sum();
@@ -163,14 +174,25 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                             &txn.splits.len().to_string(),
                         ]);
                     } else {
-                        let split = txn.splits.iter().find(|s| filter_account_ids.contains(&s.account_id)).unwrap();
+                        let split = txn
+                            .splits
+                            .iter()
+                            .find(|s| filter_account_ids.contains(&s.account_id))
+                            .unwrap();
                         let amount = split.value.to_f64();
                         running_balance += amount;
-                        
+
                         let transfer = if txn.splits.len() == 2 {
-                            let other = txn.splits.iter().find(|s| !filter_account_ids.contains(&s.account_id));
+                            let other = txn
+                                .splits
+                                .iter()
+                                .find(|s| !filter_account_ids.contains(&s.account_id));
                             match other {
-                                Some(s) => book.accounts.get(&s.account_id).map(|a| a.name.as_str()).unwrap_or("--Unknown--"),
+                                Some(s) => book
+                                    .accounts
+                                    .get(&s.account_id)
+                                    .map(|a| a.name.as_str())
+                                    .unwrap_or("--Unknown--"),
                                 None => "--Split--",
                             }
                         } else {

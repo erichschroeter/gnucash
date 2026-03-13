@@ -1,8 +1,8 @@
+use chrono::{DateTime, Utc};
 use gnc_guid::GncGUID;
-use gnc_numeric::{GncNumeric, GncNumericRounding, GncNumericDenom};
+use gnc_numeric::{GncNumeric, GncNumericDenom, GncNumericRounding};
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
-use chrono::{DateTime, Utc};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub enum AccountType {
@@ -90,18 +90,16 @@ impl Book {
     /// Find accounts by name (partial match) or exact ID string.
     pub fn find_accounts(&self, query: &str) -> Vec<&Account> {
         let query_lower = query.to_lowercase();
-        self.accounts.values()
-            .filter(|a| {
-                a.name.to_lowercase().contains(&query_lower) || 
-                a.id.to_string() == query
-            })
+        self.accounts
+            .values()
+            .filter(|a| a.name.to_lowercase().contains(&query_lower) || a.id.to_string() == query)
             .collect()
     }
 
     /// Calculate the balance of an account.
     pub fn calculate_balance(&self, account_id: GncGUID, recursive: bool) -> GncNumeric {
         let mut balance = GncNumeric::zero();
-        
+
         // Sum splits for this account
         for txn in self.transactions.values() {
             for split in &txn.splits {
@@ -111,7 +109,7 @@ impl Book {
                         split.value,
                         0,
                         GncNumericRounding::Never,
-                        GncNumericDenom::Reduce
+                        GncNumericDenom::Reduce,
                     );
                 }
             }
@@ -119,11 +117,13 @@ impl Book {
 
         if recursive {
             // Find children
-            let children: Vec<GncGUID> = self.accounts.values()
+            let children: Vec<GncGUID> = self
+                .accounts
+                .values()
                 .filter(|a| a.parent_id == Some(account_id))
                 .map(|a| a.id)
                 .collect();
-            
+
             for child_id in children {
                 let child_bal = self.calculate_balance(child_id, true);
                 balance = GncNumeric::add(
@@ -131,12 +131,31 @@ impl Book {
                     child_bal,
                     0,
                     GncNumericRounding::Never,
-                    GncNumericDenom::Reduce
+                    GncNumericDenom::Reduce,
                 );
             }
         }
 
         balance
+    }
+
+    /// Verify if a transaction is balanced (sum of splits == 0)
+    pub fn is_transaction_balanced(&self, txn_id: GncGUID) -> bool {
+        if let Some(txn) = self.transactions.get(&txn_id) {
+            let mut sum = GncNumeric::zero();
+            for split in &txn.splits {
+                sum = GncNumeric::add(
+                    sum,
+                    split.value,
+                    0,
+                    GncNumericRounding::Never,
+                    GncNumericDenom::Reduce,
+                );
+            }
+            sum.num == 0
+        } else {
+            true
+        }
     }
 }
 
@@ -173,38 +192,108 @@ mod tests {
     }
 
     #[test]
-    fn test_balance_calculation() {
+    fn test_balance_calculation_recursive() {
         let mut book = Book::new();
-        let acc_id = GncGUID::new();
+        let parent_id = GncGUID::new();
+        let child_id = GncGUID::new();
+
         book.add_account(Account {
-            name: "Checking".to_string(),
-            id: acc_id,
+            name: "Assets".to_string(),
+            id: parent_id,
+            account_type: AccountType::ASSET,
+            parent_id: None,
+        });
+        book.add_account(Account {
+            name: "Bank".to_string(),
+            id: child_id,
+            account_type: AccountType::BANK,
+            parent_id: Some(parent_id),
+        });
+
+        // Add 100 to child account
+        book.add_transaction(Transaction {
+            id: GncGUID::new(),
+            date_posted: Utc.with_ymd_and_hms(2024, 1, 1, 0, 0, 0).unwrap(),
+            description: "Deposit".to_string(),
+            splits: vec![Split {
+                id: GncGUID::new(),
+                account_id: child_id,
+                value: GncNumeric::new(100, 1),
+                quantity: GncNumeric::new(100, 1),
+                reconciled: 'n',
+            }],
+        });
+
+        // Child balance should be 100
+        assert_eq!(book.calculate_balance(child_id, false).num, 100);
+        // Parent non-recursive balance should be 0
+        assert_eq!(book.calculate_balance(parent_id, false).num, 0);
+        // Parent recursive balance should be 100
+        assert_eq!(book.calculate_balance(parent_id, true).num, 100);
+    }
+
+    #[test]
+    fn test_transaction_balancing() {
+        let mut book = Book::new();
+        let acc1 = GncGUID::new();
+        let acc2 = GncGUID::new();
+        let txn_id = GncGUID::new();
+
+        let txn = Transaction {
+            id: txn_id,
+            date_posted: Utc::now(),
+            description: "Double entry".to_string(),
+            splits: vec![
+                Split {
+                    id: GncGUID::new(),
+                    account_id: acc1,
+                    value: GncNumeric::new(100, 1),
+                    quantity: GncNumeric::new(100, 1),
+                    reconciled: 'n',
+                },
+                Split {
+                    id: GncGUID::new(),
+                    account_id: acc2,
+                    value: GncNumeric::new(-100, 1),
+                    quantity: GncNumeric::new(-100, 1),
+                    reconciled: 'n',
+                },
+            ],
+        };
+        book.add_transaction(txn);
+        assert!(book.is_transaction_balanced(txn_id));
+
+        // Unbalanced txn
+        let bad_id = GncGUID::new();
+        book.add_transaction(Transaction {
+            id: bad_id,
+            date_posted: Utc::now(),
+            description: "Unbalanced".to_string(),
+            splits: vec![Split {
+                id: GncGUID::new(),
+                account_id: acc1,
+                value: GncNumeric::new(100, 1),
+                quantity: GncNumeric::new(100, 1),
+                reconciled: 'n',
+            }],
+        });
+        assert!(!book.is_transaction_balanced(bad_id));
+    }
+
+    #[test]
+    fn test_find_accounts() {
+        let mut book = Book::new();
+        let id = GncGUID::new();
+        book.add_account(Account {
+            name: "Savings Account".to_string(),
+            id,
             account_type: AccountType::BANK,
             parent_id: None,
         });
 
-        let mut txn = Transaction {
-            id: GncGUID::new(),
-            date_posted: Utc.with_ymd_and_hms(2024, 10, 7, 10, 59, 0).unwrap(),
-            description: "Deposit".to_string(),
-            splits: vec![
-                Split {
-                    id: GncGUID::new(),
-                    account_id: acc_id,
-                    value: GncNumeric::new(100, 1),
-                    quantity: GncNumeric::new(100, 1),
-                    reconciled: 'n',
-                }
-            ],
-        };
-        book.add_transaction(txn.clone());
-
-        txn.id = GncGUID::new();
-        txn.splits[0].value = GncNumeric::new(-40, 1);
-        book.add_transaction(txn);
-
-        let balance = book.calculate_balance(acc_id, false);
-        assert_eq!(balance.num, 60);
-        assert_eq!(balance.denom, 1);
+        assert_eq!(book.find_accounts("SAVINGS").len(), 1);
+        assert_eq!(book.find_accounts("account").len(), 1);
+        assert_eq!(book.find_accounts(&id.to_string()).len(), 1);
+        assert_eq!(book.find_accounts("Checking").len(), 0);
     }
 }
