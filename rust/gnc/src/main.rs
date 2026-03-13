@@ -31,7 +31,18 @@ enum AccountActions {
     Ls {
         /// The path to the .gnucash file
         path: PathBuf,
+        /// Show balance for each account
+        #[arg(short, long)]
+        balance: bool,
     },
+    /// Show balance for all accounts
+    Balance {
+        /// The path to the .gnucash file
+        path: PathBuf,
+        /// Include sub-account balances
+        #[arg(short, long)]
+        recursive: bool,
+    }
 }
 
 #[derive(Subcommand)]
@@ -51,20 +62,55 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     match &cli.command {
         Commands::Accounts { action } => match action {
-            AccountActions::Ls { path } => {
+            AccountActions::Ls { path, balance } => {
                 let book = load_gnucash_file(path)?;
                 let mut table = Table::new();
-                table.set_header(vec!["Name", "Type", "ID"]);
+                if *balance {
+                    table.set_header(vec!["Name", "Type", "Balance"]);
+                } else {
+                    table.set_header(vec!["Name", "Type", "ID"]);
+                }
 
                 let mut accounts: Vec<_> = book.list_accounts();
                 accounts.sort_by(|a, b| a.name.cmp(&b.name));
 
                 for account in accounts {
-                    table.add_row(vec![
-                        &account.name,
-                        &format!("{:?}", account.account_type),
-                        &account.id.to_string(),
-                    ]);
+                    if *balance {
+                        let bal = book.calculate_balance(account.id, false);
+                        table.add_row(vec![
+                            &account.name,
+                            &format!("{:?}", account.account_type),
+                            &format!("{:.2}", bal.to_f64()),
+                        ]);
+                    } else {
+                        table.add_row(vec![
+                            &account.name,
+                            &format!("{:?}", account.account_type),
+                            &account.id.to_string(),
+                        ]);
+                    }
+                }
+
+                println!("{}", table);
+            }
+            AccountActions::Balance { path, recursive } => {
+                let book = load_gnucash_file(path)?;
+                let mut table = Table::new();
+                table.set_header(vec!["Account", "Type", "Balance"]);
+
+                let mut accounts: Vec<_> = book.list_accounts();
+                accounts.sort_by(|a, b| a.name.cmp(&b.name));
+
+                for account in accounts {
+                    let bal = book.calculate_balance(account.id, *recursive);
+                    // Only show non-zero balances for a cleaner view
+                    if bal.num != 0 {
+                        table.add_row(vec![
+                            &account.name,
+                            &format!("{:?}", account.account_type),
+                            &format!("{:.2}", bal.to_f64()),
+                        ]);
+                    }
                 }
 
                 println!("{}", table);
@@ -75,7 +121,6 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                 let book = load_gnucash_file(path)?;
                 let mut table = Table::new();
                 
-                // If account filter is provided, we show a "Register" view
                 let filter_account_ids: Vec<_> = if let Some(q) = account {
                     let accs = book.find_accounts(q);
                     if accs.is_empty() {
@@ -90,19 +135,19 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                 if filter_account_ids.is_empty() {
                     table.set_header(vec!["Date", "Description", "Value", "Splits"]);
                 } else {
-                    table.set_header(vec!["Date", "Description", "Transfer", "Amount", "Reconciled"]);
+                    table.set_header(vec!["Date", "Description", "Transfer", "Amount", "Balance", "R"]);
                 }
 
                 let mut txns: Vec<_> = book.list_transactions();
-                // Filter transactions if requested
                 if !filter_account_ids.is_empty() {
                     txns.retain(|txn| {
                         txn.splits.iter().any(|s| filter_account_ids.contains(&s.account_id))
                     });
                 }
 
-                // Sort by date
                 txns.sort_by(|a, b| a.date_posted.cmp(&b.date_posted));
+
+                let mut running_balance = 0.0;
 
                 for txn in txns {
                     if filter_account_ids.is_empty() {
@@ -118,11 +163,10 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                             &txn.splits.len().to_string(),
                         ]);
                     } else {
-                        // Register view for the filtered account
-                        // Find the split corresponding to the filtered account
                         let split = txn.splits.iter().find(|s| filter_account_ids.contains(&s.account_id)).unwrap();
+                        let amount = split.value.to_f64();
+                        running_balance += amount;
                         
-                        // Find the transfer account (the "other" account if there are exactly 2 splits)
                         let transfer = if txn.splits.len() == 2 {
                             let other = txn.splits.iter().find(|s| !filter_account_ids.contains(&s.account_id));
                             match other {
@@ -137,7 +181,8 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                             &txn.date_posted.format("%Y-%m-%d").to_string(),
                             &txn.description,
                             transfer,
-                            &format!("{:.2}", split.value.to_f64()),
+                            &format!("{:.2}", amount),
+                            &format!("{:.2}", running_balance),
                             &split.reconciled.to_string(),
                         ]);
                     }

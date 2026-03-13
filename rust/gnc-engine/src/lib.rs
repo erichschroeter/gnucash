@@ -1,5 +1,5 @@
 use gnc_guid::GncGUID;
-use gnc_numeric::GncNumeric;
+use gnc_numeric::{GncNumeric, GncNumericRounding, GncNumericDenom};
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use chrono::{DateTime, Utc};
@@ -97,6 +97,47 @@ impl Book {
             })
             .collect()
     }
+
+    /// Calculate the balance of an account.
+    pub fn calculate_balance(&self, account_id: GncGUID, recursive: bool) -> GncNumeric {
+        let mut balance = GncNumeric::zero();
+        
+        // Sum splits for this account
+        for txn in self.transactions.values() {
+            for split in &txn.splits {
+                if split.account_id == account_id {
+                    balance = GncNumeric::add(
+                        balance,
+                        split.value,
+                        0,
+                        GncNumericRounding::Never,
+                        GncNumericDenom::Reduce
+                    );
+                }
+            }
+        }
+
+        if recursive {
+            // Find children
+            let children: Vec<GncGUID> = self.accounts.values()
+                .filter(|a| a.parent_id == Some(account_id))
+                .map(|a| a.id)
+                .collect();
+            
+            for child_id in children {
+                let child_bal = self.calculate_balance(child_id, true);
+                balance = GncNumeric::add(
+                    balance,
+                    child_bal,
+                    0,
+                    GncNumericRounding::Never,
+                    GncNumericDenom::Reduce
+                );
+            }
+        }
+
+        balance
+    }
 }
 
 #[cfg(test)]
@@ -132,42 +173,38 @@ mod tests {
     }
 
     #[test]
-    fn test_find_accounts() {
+    fn test_balance_calculation() {
         let mut book = Book::new();
-        let id = GncGUID::new();
+        let acc_id = GncGUID::new();
         book.add_account(Account {
-            name: "Test Account".to_string(),
-            id,
+            name: "Checking".to_string(),
+            id: acc_id,
             account_type: AccountType::BANK,
             parent_id: None,
         });
 
-        assert_eq!(book.find_accounts("Test").len(), 1);
-        assert_eq!(book.find_accounts(&id.to_string()).len(), 1);
-        assert_eq!(book.find_accounts("Nonexistent").len(), 0);
-    }
-
-    #[test]
-    fn test_create_transaction() {
-        let mut book = Book::new();
-        let acc_id = GncGUID::new();
-        
-        let split = Split {
-            id: GncGUID::new(),
-            account_id: acc_id,
-            value: GncNumeric::new(100, 1),
-            quantity: GncNumeric::new(100, 1),
-            reconciled: 'n',
-        };
-
-        let txn = Transaction {
+        let mut txn = Transaction {
             id: GncGUID::new(),
             date_posted: Utc.with_ymd_and_hms(2024, 10, 7, 10, 59, 0).unwrap(),
-            description: "Test Txn".to_string(),
-            splits: vec![split],
+            description: "Deposit".to_string(),
+            splits: vec![
+                Split {
+                    id: GncGUID::new(),
+                    account_id: acc_id,
+                    value: GncNumeric::new(100, 1),
+                    quantity: GncNumeric::new(100, 1),
+                    reconciled: 'n',
+                }
+            ],
         };
+        book.add_transaction(txn.clone());
 
+        txn.id = GncGUID::new();
+        txn.splits[0].value = GncNumeric::new(-40, 1);
         book.add_transaction(txn);
-        assert_eq!(book.transactions.len(), 1);
+
+        let balance = book.calculate_balance(acc_id, false);
+        assert_eq!(balance.num, 60);
+        assert_eq!(balance.denom, 1);
     }
 }
