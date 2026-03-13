@@ -1,0 +1,1 @@
+[workspace]\nmembers = [\n    "gnc-numeric",\n    "gnc-guid",\n]
