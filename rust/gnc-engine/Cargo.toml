@@ -1,9 +1,8 @@
 [package]
-name = "gnc-guid"
+name = "gnc-engine"
 version = "0.1.0"
 edition = "2021"
 
 [dependencies]
-uuid = { version = "1.0", features = ["v4", "serde"] }
+gnc-guid = { path = "../gnc-guid" }
 serde = { version = "1.0", features = ["derive"] }
-thiserror = "2.0"

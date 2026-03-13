@@ -1,0 +1,10 @@
+[package]
+name = "gnc-xml"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+gnc-engine = { path = "../gnc-engine" }
+gnc-guid = { path = "../gnc-guid" }
+quick-xml = "0.36"
+flate2 = "1.0"

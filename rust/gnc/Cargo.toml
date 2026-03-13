@@ -1,0 +1,10 @@
+[package]
+name = "gnc"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+gnc-xml = { path = "../gnc-xml" }
+gnc-engine = { path = "../gnc-engine" }
+clap = { version = "4.0", features = ["derive"] }
+comfy-table = "7.0"
