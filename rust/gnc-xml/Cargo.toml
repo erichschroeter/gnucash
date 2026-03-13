@@ -6,5 +6,7 @@ edition = "2021"
 [dependencies]
 gnc-engine = { path = "../gnc-engine" }
 gnc-guid = { path = "../gnc-guid" }
+gnc-numeric = { path = "../gnc-numeric" }
 quick-xml = "0.36"
 flate2 = "1.0"
+chrono = "0.4"

@@ -1,6 +1,8 @@
 use gnc_guid::GncGUID;
+use gnc_numeric::GncNumeric;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
+use chrono::{DateTime, Utc};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub enum AccountType {
@@ -29,10 +31,28 @@ pub struct Account {
     pub parent_id: Option<GncGUID>,
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct Split {
+    pub id: GncGUID,
+    pub account_id: GncGUID,
+    pub value: GncNumeric,
+    pub quantity: GncNumeric,
+    pub reconciled: char,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct Transaction {
+    pub id: GncGUID,
+    pub date_posted: DateTime<Utc>,
+    pub description: String,
+    pub splits: Vec<Split>,
+}
+
 #[derive(Debug, Default, Serialize, Deserialize)]
 pub struct Book {
     pub id: GncGUID,
     pub accounts: HashMap<GncGUID, Account>,
+    pub transactions: HashMap<GncGUID, Transaction>,
 }
 
 impl Book {
@@ -40,11 +60,16 @@ impl Book {
         Self {
             id: GncGUID::new(),
             accounts: HashMap::new(),
+            transactions: HashMap::new(),
         }
     }
 
     pub fn add_account(&mut self, account: Account) {
         self.accounts.insert(account.id, account);
+    }
+
+    pub fn add_transaction(&mut self, transaction: Transaction) {
+        self.transactions.insert(transaction.id, transaction);
     }
 
     /// Returns a flat list of accounts.
@@ -56,11 +81,17 @@ impl Book {
     pub fn get_parent(&self, account: &Account) -> Option<&Account> {
         account.parent_id.and_then(|id| self.accounts.get(&id))
     }
+
+    /// List all transactions.
+    pub fn list_transactions(&self) -> Vec<&Transaction> {
+        self.transactions.values().collect()
+    }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use chrono::TimeZone;
 
     #[test]
     fn test_create_account() {
@@ -87,5 +118,29 @@ mod tests {
         let bank_acc = book.accounts.get(&bank_id).unwrap();
         let parent = book.get_parent(bank_acc).unwrap();
         assert_eq!(parent.name, "Root Account");
+    }
+
+    #[test]
+    fn test_create_transaction() {
+        let mut book = Book::new();
+        let acc_id = GncGUID::new();
+        
+        let split = Split {
+            id: GncGUID::new(),
+            account_id: acc_id,
+            value: GncNumeric::new(100, 1),
+            quantity: GncNumeric::new(100, 1),
+            reconciled: 'n',
+        };
+
+        let txn = Transaction {
+            id: GncGUID::new(),
+            date_posted: Utc.with_yml_d_hms(2024, 10, 7, 10, 59, 0).unwrap(),
+            description: "Test Txn".to_string(),
+            splits: vec![split],
+        };
+
+        book.add_transaction(txn);
+        assert_eq!(book.transactions.len(), 1);
     }
 }
