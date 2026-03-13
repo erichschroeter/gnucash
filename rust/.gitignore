@@ -1,0 +1,11 @@
+# Rust build artifacts
+/target/
+Cargo.lock
+
+# IDE and temporary files
+**/*.rs.bk
+*.swp
+*.swo
+
+# Precision/Profiling data
+*.profraw
