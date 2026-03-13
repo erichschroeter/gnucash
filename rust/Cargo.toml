@@ -1,1 +1,5 @@
-[workspace]\nmembers = [\n    "gnc-numeric",\n    "gnc-guid",\n]
+[workspace]
+members = [
+    "gnc-numeric",
+    "gnc-guid",
+]
