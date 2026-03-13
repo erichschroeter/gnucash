@@ -2,7 +2,7 @@ use chrono::{DateTime, Utc};
 use gnc_guid::GncGUID;
 use gnc_numeric::{GncNumeric, GncNumericDenom, GncNumericRounding};
 use serde::{Deserialize, Serialize};
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub enum AccountType {
@@ -98,6 +98,21 @@ impl Book {
 
     /// Calculate the balance of an account.
     pub fn calculate_balance(&self, account_id: GncGUID, recursive: bool) -> GncNumeric {
+        let mut visited = HashSet::new();
+        self.calculate_balance_internal(account_id, recursive, &mut visited)
+    }
+
+    fn calculate_balance_internal(
+        &self,
+        account_id: GncGUID,
+        recursive: bool,
+        visited: &mut HashSet<GncGUID>,
+    ) -> GncNumeric {
+        if !visited.insert(account_id) {
+            // Cycle detected! Stop recursion here to avoid stack overflow.
+            return GncNumeric::zero();
+        }
+
         let mut balance = GncNumeric::zero();
 
         // Sum splits for this account
@@ -125,7 +140,7 @@ impl Book {
                 .collect();
 
             for child_id in children {
-                let child_bal = self.calculate_balance(child_id, true);
+                let child_bal = self.calculate_balance_internal(child_id, true, visited);
                 balance = GncNumeric::add(
                     balance,
                     child_bal,
@@ -137,6 +152,24 @@ impl Book {
         }
 
         balance
+    }
+
+    /// Check if an account is part of a circular hierarchy.
+    pub fn is_circular(&self, account_id: GncGUID) -> bool {
+        let mut current_id = account_id;
+        let mut visited = HashSet::new();
+
+        while let Some(account) = self.accounts.get(&current_id) {
+            if !visited.insert(current_id) {
+                return true;
+            }
+            if let Some(parent_id) = account.parent_id {
+                current_id = parent_id;
+            } else {
+                break;
+            }
+        }
+        false
     }
 
     /// Verify if a transaction is balanced (sum of splits == 0)
@@ -230,6 +263,33 @@ mod tests {
         assert_eq!(book.calculate_balance(parent_id, false).num, 0);
         // Parent recursive balance should be 100
         assert_eq!(book.calculate_balance(parent_id, true).num, 100);
+    }
+
+    #[test]
+    fn test_circular_detection() {
+        let mut book = Book::new();
+        let id1 = GncGUID::new();
+        let id2 = GncGUID::new();
+
+        book.add_account(Account {
+            name: "Account 1".to_string(),
+            id: id1,
+            account_type: AccountType::ASSET,
+            parent_id: Some(id2),
+        });
+        book.add_account(Account {
+            name: "Account 2".to_string(),
+            id: id2,
+            account_type: AccountType::ASSET,
+            parent_id: Some(id1), // Cycle!
+        });
+
+        assert!(book.is_circular(id1));
+        assert!(book.is_circular(id2));
+
+        // calculate_balance should not overflow
+        let bal = book.calculate_balance(id1, true);
+        assert_eq!(bal.num, 0);
     }
 
     #[test]
