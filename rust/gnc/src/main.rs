@@ -40,6 +40,9 @@ enum TransactionActions {
     Ls {
         /// The path to the .gnucash file
         path: PathBuf,
+        /// Filter by account name or ID
+        #[arg(short, long)]
+        account: Option<String>,
     },
 }
 
@@ -68,28 +71,76 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             }
         },
         Commands::Transactions { action } => match action {
-            TransactionActions::Ls { path } => {
+            TransactionActions::Ls { path, account } => {
                 let book = load_gnucash_file(path)?;
                 let mut table = Table::new();
-                table.set_header(vec!["Date", "Description", "Value", "Splits"]);
+                
+                // If account filter is provided, we show a "Register" view
+                let filter_account_ids: Vec<_> = if let Some(q) = account {
+                    let accs = book.find_accounts(q);
+                    if accs.is_empty() {
+                        eprintln!("No accounts found matching '{}'", q);
+                        return Ok(());
+                    }
+                    accs.iter().map(|a| a.id).collect()
+                } else {
+                    Vec::new()
+                };
+
+                if filter_account_ids.is_empty() {
+                    table.set_header(vec!["Date", "Description", "Value", "Splits"]);
+                } else {
+                    table.set_header(vec!["Date", "Description", "Transfer", "Amount", "Reconciled"]);
+                }
 
                 let mut txns: Vec<_> = book.list_transactions();
+                // Filter transactions if requested
+                if !filter_account_ids.is_empty() {
+                    txns.retain(|txn| {
+                        txn.splits.iter().any(|s| filter_account_ids.contains(&s.account_id))
+                    });
+                }
+
                 // Sort by date
                 txns.sort_by(|a, b| a.date_posted.cmp(&b.date_posted));
 
                 for txn in txns {
-                    // Calculate total value (absolute sum of positive splits)
-                    let total_value: f64 = txn.splits.iter()
-                        .filter(|s| s.value.num > 0)
-                        .map(|s| s.value.to_f64())
-                        .sum();
+                    if filter_account_ids.is_empty() {
+                        let total_value: f64 = txn.splits.iter()
+                            .filter(|s| s.value.num > 0)
+                            .map(|s| s.value.to_f64())
+                            .sum();
 
-                    table.add_row(vec![
-                        &txn.date_posted.format("%Y-%m-%d").to_string(),
-                        &txn.description,
-                        &format!("{:.2}", total_value),
-                        &txn.splits.len().to_string(),
-                    ]);
+                        table.add_row(vec![
+                            &txn.date_posted.format("%Y-%m-%d").to_string(),
+                            &txn.description,
+                            &format!("{:.2}", total_value),
+                            &txn.splits.len().to_string(),
+                        ]);
+                    } else {
+                        // Register view for the filtered account
+                        // Find the split corresponding to the filtered account
+                        let split = txn.splits.iter().find(|s| filter_account_ids.contains(&s.account_id)).unwrap();
+                        
+                        // Find the transfer account (the "other" account if there are exactly 2 splits)
+                        let transfer = if txn.splits.len() == 2 {
+                            let other = txn.splits.iter().find(|s| !filter_account_ids.contains(&s.account_id));
+                            match other {
+                                Some(s) => book.accounts.get(&s.account_id).map(|a| a.name.as_str()).unwrap_or("--Unknown--"),
+                                None => "--Split--",
+                            }
+                        } else {
+                            "--Split--"
+                        };
+
+                        table.add_row(vec![
+                            &txn.date_posted.format("%Y-%m-%d").to_string(),
+                            &txn.description,
+                            transfer,
+                            &format!("{:.2}", split.value.to_f64()),
+                            &split.reconciled.to_string(),
+                        ]);
+                    }
                 }
 
                 println!("{}", table);

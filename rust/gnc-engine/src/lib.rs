@@ -86,6 +86,17 @@ impl Book {
     pub fn list_transactions(&self) -> Vec<&Transaction> {
         self.transactions.values().collect()
     }
+
+    /// Find accounts by name (partial match) or exact ID string.
+    pub fn find_accounts(&self, query: &str) -> Vec<&Account> {
+        let query_lower = query.to_lowercase();
+        self.accounts.values()
+            .filter(|a| {
+                a.name.to_lowercase().contains(&query_lower) || 
+                a.id.to_string() == query
+            })
+            .collect()
+    }
 }
 
 #[cfg(test)]
@@ -121,6 +132,22 @@ mod tests {
     }
 
     #[test]
+    fn test_find_accounts() {
+        let mut book = Book::new();
+        let id = GncGUID::new();
+        book.add_account(Account {
+            name: "Test Account".to_string(),
+            id,
+            account_type: AccountType::BANK,
+            parent_id: None,
+        });
+
+        assert_eq!(book.find_accounts("Test").len(), 1);
+        assert_eq!(book.find_accounts(&id.to_string()).len(), 1);
+        assert_eq!(book.find_accounts("Nonexistent").len(), 0);
+    }
+
+    #[test]
     fn test_create_transaction() {
         let mut book = Book::new();
         let acc_id = GncGUID::new();
@@ -135,7 +162,7 @@ mod tests {
 
         let txn = Transaction {
             id: GncGUID::new(),
-            date_posted: Utc.with_yml_d_hms(2024, 10, 7, 10, 59, 0).unwrap(),
+            date_posted: Utc.with_ymd_and_hms(2024, 10, 7, 10, 59, 0).unwrap(),
             description: "Test Txn".to_string(),
             splits: vec![split],
         };
