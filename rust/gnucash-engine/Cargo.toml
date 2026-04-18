@@ -10,6 +10,9 @@ serde = { version = "1.0", features = ["derive"] }
 uuid = { version = "1.0", features = ["v4", "serde"] }
 thiserror = "1.0"
 chrono = { version = "0.4", features = ["serde"] }
+log = "0.4"
+quick-xml = { version = "0.31", features = ["serialize"] }
+flate2 = "1.0"
 
 [dev-dependencies]
 proptest = "1.0"

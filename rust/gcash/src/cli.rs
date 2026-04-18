@@ -1,4 +1,4 @@
-use clap::{Parser, ValueEnum};
+use clap::{Parser, Subcommand, ValueEnum};
 
 /// Command-line arguments for the gcash application.
 #[derive(Parser, Debug)]
@@ -15,6 +15,22 @@ pub struct Cli {
     /// Enter the interactive terminal UI.
     #[arg(short, long)]
     pub interactive: bool,
+
+    /// Optional path to a .gnucash data file to load.
+    #[arg(name = "FILE")]
+    pub file: Option<String>,
+
+    #[command(subcommand)]
+    pub command: Option<Commands>,
+}
+
+#[derive(Subcommand, Debug)]
+pub enum Commands {
+    /// Import a GnuCash data file.
+    Import {
+        /// Path to the .gnucash file.
+        path: String,
+    },
 }
 
 /// Allowed verbosity levels for the logger.

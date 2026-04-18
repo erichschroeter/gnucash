@@ -11,6 +11,18 @@ impl AccountId {
     }
 }
 
+impl From<Uuid> for AccountId {
+    fn from(uuid: Uuid) -> Self {
+        Self(uuid)
+    }
+}
+
+impl From<AccountId> for Uuid {
+    fn from(id: AccountId) -> Self {
+        id.0
+    }
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub struct TransactionId(Uuid);
 
@@ -20,12 +32,24 @@ impl TransactionId {
     }
 }
 
+impl From<Uuid> for TransactionId {
+    fn from(uuid: Uuid) -> Self {
+        Self(uuid)
+    }
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub struct SplitId(Uuid);
 
 impl SplitId {
     pub fn new() -> Self {
         Self(Uuid::new_v4())
+    }
+}
+
+impl From<Uuid> for SplitId {
+    fn from(uuid: Uuid) -> Self {
+        Self(uuid)
     }
 }
 
