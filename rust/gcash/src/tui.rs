@@ -6,13 +6,13 @@ use crossterm::{
 use ratatui::{
     backend::CrosstermBackend,
     layout::{Alignment, Constraint, Direction, Layout},
-    widgets::{Block, Borders, Paragraph, Table, Row, Cell},
+    widgets::{Block, Borders, Paragraph, Table, Row, Cell, Tabs},
     Terminal,
 };
 use std::{io, time::Duration};
 use tokio::sync::mpsc;
 use crate::error::AppError;
-use gnucash_engine::domain::Ledger;
+use gnucash_engine::domain::{Ledger, AccountId};
 use num_traits::ToPrimitive;
 
 /// TUI events handled by the async event loop.
@@ -32,14 +32,33 @@ pub struct App {
     pub state: AppState,
     pub should_quit: bool,
     pub ledger: Ledger,
+    pub tab_index: usize,
+    pub active_accounts: Vec<AccountId>,
 }
 
 impl App {
     pub fn new(ledger: Ledger) -> Self {
+        let mut active_accounts = std::collections::HashSet::new();
+        for tx in &ledger.transactions {
+            for split in tx.splits() {
+                active_accounts.insert(split.account_id);
+            }
+        }
+        let mut active_accounts: Vec<AccountId> = active_accounts.into_iter().collect();
+        // Sort active accounts by name for consistent tab order
+        active_accounts.sort_by_cached_key(|id| {
+            ledger.accounts.iter()
+                .find(|a| a.id == *id)
+                .map(|a| a.name.clone())
+                .unwrap_or_default()
+        });
+
         Self {
             state: AppState::View,
             should_quit: false,
             ledger,
+            tab_index: 0,
+            active_accounts,
         }
     }
 
@@ -52,13 +71,25 @@ impl App {
                     KeyCode::Char('q') | KeyCode::Esc => self.should_quit = true,
                     KeyCode::Char('v') => self.state = AppState::View,
                     KeyCode::Char('e') => self.state = AppState::Edit,
+                    KeyCode::Right | KeyCode::Tab => {
+                        let total_tabs = self.active_accounts.len() + 1;
+                        self.tab_index = (self.tab_index + 1) % total_tabs;
+                    }
+                    KeyCode::Left | KeyCode::BackTab => {
+                        let total_tabs = self.active_accounts.len() + 1;
+                        if self.tab_index == 0 {
+                            self.tab_index = total_tabs - 1;
+                        } else {
+                            self.tab_index -= 1;
+                        }
+                    }
                     _ => {}
                 }
             }
         }
     }
 
-    fn get_account_name(&self, id: &gnucash_engine::domain::AccountId) -> String {
+    fn get_account_name(&self, id: &AccountId) -> String {
         self.ledger.accounts.iter()
             .find(|a| a.id == *id)
             .map(|a| a.name.clone())
@@ -105,73 +136,107 @@ pub async fn run(ledger: Ledger) -> Result<(), AppError> {
             let layout = Layout::default()
                 .direction(Direction::Vertical)
                 .constraints([
-                    Constraint::Length(3), // Title
+                    Constraint::Length(1), // Title
+                    Constraint::Length(3), // Tabs
                     Constraint::Min(0),    // Content
                     Constraint::Length(1), // Footer
                 ])
                 .split(size);
 
-            let title_block = Block::default().title("Gcash TUI").borders(Borders::ALL);
-            let title = Paragraph::new("Transactions Register")
-                .block(title_block)
-                .alignment(Alignment::Center);
+            let title = Paragraph::new("Gcash Interactive").alignment(Alignment::Center);
             f.render_widget(title, layout[0]);
+
+            let mut tab_titles = vec!["Accounts Overview".to_string()];
+            tab_titles.extend(app.active_accounts.iter().map(|id| app.get_account_name(id)));
+            
+            let tabs = Tabs::new(tab_titles)
+                .block(Block::default().borders(Borders::ALL).title("Accounts"))
+                .select(app.tab_index)
+                .highlight_style(ratatui::style::Style::default().add_modifier(ratatui::style::Modifier::BOLD).fg(ratatui::style::Color::Yellow));
+            f.render_widget(tabs, layout[1]);
 
             match app.state {
                 AppState::View => {
-                    let rows: Vec<Row> = app.ledger.transactions.iter().map(|tx| {
-                        let date = tx.date().format("%Y-%m-%d").to_string();
-                        let desc = tx.description().to_string();
-                        
-                        // Deduce transfer account
-                        let transfer = if tx.splits().len() == 2 {
-                            // Simple transaction, show the OTHER account
-                            app.get_account_name(&tx.splits()[1].account_id)
-                        } else if tx.splits().len() > 2 {
-                            "-- Split --".to_string()
-                        } else {
-                            "None".to_string()
-                        };
+                    if app.tab_index == 0 {
+                        // Render Accounts Overview
+                        let rows: Vec<Row> = app.ledger.accounts.iter().map(|acc| {
+                            Row::new(vec![
+                                Cell::from(acc.name.clone()),
+                                Cell::from(format!("{:?}", acc.account_type)),
+                                Cell::from(format!("{:?}", acc.id)),
+                            ])
+                        }).collect();
 
-                        let amount_val = if !tx.splits().is_empty() {
-                            format!("{:.2}", tx.splits()[0].amount.to_f64().unwrap_or(0.0))
-                        } else {
-                            "0.00".to_string()
-                        };
-
-                        Row::new(vec![
-                            Cell::from(date),
-                            Cell::from(desc),
-                            Cell::from(transfer),
-                            Cell::from(amount_val),
+                        let table = Table::new(rows, [
+                            Constraint::Percentage(40),
+                            Constraint::Percentage(20),
+                            Constraint::Percentage(40),
                         ])
-                    }).collect();
+                        .header(Row::new(vec!["Name", "Type", "ID"])
+                            .style(ratatui::style::Style::default().add_modifier(ratatui::style::Modifier::BOLD))
+                        )
+                        .block(Block::default().borders(Borders::ALL).title("All Accounts"))
+                        .column_spacing(1);
 
-                    let table = Table::new(rows, [
-                        Constraint::Length(12),
-                        Constraint::Min(20),
-                        Constraint::Min(20),
-                        Constraint::Length(10),
-                    ])
-                    .header(Row::new(vec!["Date", "Description", "Transfer", "Amount"])
-                        .style(ratatui::style::Style::default().add_modifier(ratatui::style::Modifier::BOLD))
-                    )
-                    .block(Block::default().borders(Borders::ALL).title("Transactions"))
-                    .column_spacing(1);
+                        f.render_widget(table, layout[2]);
+                    } else {
+                        // Render Specific Account Register
+                        let active_id = app.active_accounts[app.tab_index - 1];
+                        
+                        let rows: Vec<Row> = app.ledger.transactions.iter()
+                            .filter(|tx| tx.splits().iter().any(|s| s.account_id == active_id))
+                            .map(|tx| {
+                                let date = tx.date().format("%Y-%m-%d").to_string();
+                                let desc = tx.description().to_string();
+                                
+                                let active_split = tx.splits().iter().find(|s| s.account_id == active_id).unwrap();
+                                let other_splits: Vec<_> = tx.splits().iter().filter(|s| s.account_id != active_id).collect();
 
-                    f.render_widget(table, layout[1]);
+                                // Deduce transfer account
+                                let transfer = if other_splits.len() == 1 {
+                                    app.get_account_name(&other_splits[0].account_id)
+                                } else if other_splits.len() > 1 {
+                                    "-- Split --".to_string()
+                                } else {
+                                    "None".to_string()
+                                };
+
+                                let amount_val = format!("{:.2}", active_split.amount.to_f64().unwrap_or(0.0));
+
+                                Row::new(vec![
+                                    Cell::from(date),
+                                    Cell::from(desc),
+                                    Cell::from(transfer),
+                                    Cell::from(amount_val),
+                                ])
+                            }).collect();
+
+                        let table = Table::new(rows, [
+                            Constraint::Length(12),
+                            Constraint::Min(20),
+                            Constraint::Min(20),
+                            Constraint::Length(10),
+                        ])
+                        .header(Row::new(vec!["Date", "Description", "Transfer", "Amount"])
+                            .style(ratatui::style::Style::default().add_modifier(ratatui::style::Modifier::BOLD))
+                        )
+                        .block(Block::default().borders(Borders::ALL).title(format!("Register: {}", app.get_account_name(&active_id))))
+                        .column_spacing(1);
+
+                        f.render_widget(table, layout[2]);
+                    }
                 }
                 AppState::Edit => {
                     let content = Paragraph::new("Edit Mode: Feature not yet implemented.\nPress 'v' to return to View.")
                         .block(Block::default().borders(Borders::ALL))
                         .alignment(Alignment::Center);
-                    f.render_widget(content, layout[1]);
+                    f.render_widget(content, layout[2]);
                 }
             };
 
-            let footer = Paragraph::new("Press 'v' for View, 'e' for Edit, 'q' to Quit")
+            let footer = Paragraph::new("Arrows/Tab: Change Tab | 'v': View | 'e': Edit | 'q': Quit")
                 .alignment(Alignment::Left);
-            f.render_widget(footer, layout[2]);
+            f.render_widget(footer, layout[3]);
         })?;
 
         // Handle async events from our channel
