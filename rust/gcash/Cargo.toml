@@ -1,0 +1,35 @@
+[package]
+name = "gcash"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+# Async Runtime
+tokio = { version = "1", features = ["full"] }
+
+# CLI Argument Parsing
+clap = { version = "4", features = ["derive"] }
+
+# Configuration Management
+config = { version = "0.14", features = ["yaml"] }
+serde = { version = "1.0", features = ["derive"] }
+dirs = "5.0" # Used to locate OS-specific config directories like ~/.config
+
+# Logging
+env_logger = "0.11"
+log = "0.4"
+
+# Error Handling
+anyhow = "1.0"
+thiserror = "1.0"
+
+# TUI
+ratatui = "0.26"
+crossterm = "0.27"
+
+# Domain Library
+gnucash-engine = { path = "../gnucash-engine" }
+
+[dev-dependencies]
+tempfile = "3.10"
+unindent = "0.2"
