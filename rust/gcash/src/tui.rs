@@ -378,6 +378,22 @@ impl App {
                                 }
                             }
                         }
+                        Action::OpenEntry => {
+                            if self.state == AppState::View {
+                                if self.tab_index == 0 {
+                                    if let Some(acc_id) = self.get_selected_account() {
+                                        if let Some(index) =
+                                            self.active_accounts.iter().position(|id| *id == acc_id)
+                                        {
+                                            self.tab_index = index + 1;
+                                            self.table_state.select(Some(0));
+                                        }
+                                    }
+                                } else {
+                                    // TODO: Implement transaction view
+                                }
+                            }
+                        }
                         Action::MoveRight | Action::FocusNext => {
                             let total_tabs = self.active_accounts.len() + 1;
                             self.tab_index = (self.tab_index + 1) % total_tabs;
@@ -790,7 +806,7 @@ pub async fn run(ledger: Ledger, settings: AppSettings) -> Result<(), AppError> 
             };
 
             let footer = Paragraph::new(
-                "Arrows/HJKL/Tab: Navigate | '/': Search | 'v': View | 'e': Edit | 'q': Quit",
+                "Arrows/HJKL/Tab: Navigate | '/': Search | 'v': View | 'enter': Open | 'i': Edit | 'q': Quit",
             )
             .alignment(Alignment::Left);
             f.render_widget(footer, layout[4]);
@@ -960,8 +976,8 @@ mod tests {
         assert_eq!(app.tab_index, 0); // Overview
         app.table_state.select(Some(0)); // Select "Checking"
 
-        // Press Enter to edit
-        app.update(make_key_event(KeyCode::Enter, KeyModifiers::empty()));
+        // Press 'i' to edit
+        app.update(make_key_event(KeyCode::Char('i'), KeyModifiers::empty()));
         assert!(matches!(app.state, AppState::Edit));
 
         if let Some(edit_state) = &app.edit_state {
@@ -992,7 +1008,7 @@ mod tests {
         app.table_state.select(Some(0)); // Select "Checking"
 
         // Enter edit mode
-        app.update(make_key_event(KeyCode::Enter, KeyModifiers::empty()));
+        app.update(make_key_event(KeyCode::Char('i'), KeyModifiers::empty()));
         assert!(matches!(app.state, AppState::Edit));
 
         if let Some(edit_state) = &app.edit_state {
@@ -1050,8 +1066,8 @@ mod tests {
         assert_eq!(app.tab_index, 1);
         app.table_state.select(Some(0)); // Select first transaction ("Walmart")
 
-        // Press Enter to edit
-        app.update(make_key_event(KeyCode::Enter, KeyModifiers::empty()));
+        // Press 'i' to edit
+        app.update(make_key_event(KeyCode::Char('i'), KeyModifiers::empty()));
         assert!(matches!(app.state, AppState::Edit));
 
         if let Some(edit_state) = &app.edit_state {
@@ -1086,8 +1102,8 @@ mod tests {
         assert_eq!(app.tab_index, 1);
         app.table_state.select(Some(0)); // Select first transaction ("Walmart")
 
-        // Press Enter to edit
-        app.update(make_key_event(KeyCode::Enter, KeyModifiers::empty()));
+        // Press 'i' to edit
+        app.update(make_key_event(KeyCode::Char('i'), KeyModifiers::empty()));
         assert!(matches!(app.state, AppState::Edit));
 
         if let Some(edit_state) = &app.edit_state {
@@ -1140,10 +1156,24 @@ mod tests {
         assert!(matches!(app.state, AppState::View)); // Start in View mode
         app.table_state.select(Some(0)); // Select an account
 
-        // 'enter' should trigger EditEntry
-        app.update(make_key_event(KeyCode::Enter, KeyModifiers::empty()));
+        // 'i' should trigger EditEntry
+        app.update(make_key_event(KeyCode::Char('i'), KeyModifiers::empty()));
         assert!(matches!(app.state, AppState::Edit));
         assert!(app.edit_state.is_some());
+    }
+
+    #[test]
+    fn test_open_account_action() {
+        let mut app = get_app_with_defaults();
+        assert_eq!(app.tab_index, 0); // Start in Overview mode
+        app.table_state.select(Some(0)); // Select first account ("Checking")
+
+        // Press 'enter' to open
+        app.update(make_key_event(KeyCode::Enter, KeyModifiers::empty()));
+
+        // Checking is active_accounts[0], so it should set tab_index = 0 + 1 = 1
+        assert_eq!(app.tab_index, 1);
+        assert_eq!(app.table_state.selected(), Some(0));
     }
 
     #[test]

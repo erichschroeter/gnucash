@@ -14,6 +14,7 @@ pub enum Action {
     MoveUp,
     MoveDown,
     EditEntry,
+    OpenEntry,
     FocusNext,
     FocusPrev,
     ToggleSplit,
@@ -41,7 +42,8 @@ impl AppSettings {
         );
         bindings.insert(Action::MoveUp, vec!["k".to_string(), "up".to_string()]);
         bindings.insert(Action::MoveDown, vec!["j".to_string(), "down".to_string()]);
-        bindings.insert(Action::EditEntry, vec!["enter".to_string()]);
+        bindings.insert(Action::EditEntry, vec!["i".to_string()]);
+        bindings.insert(Action::OpenEntry, vec!["enter".to_string()]);
         bindings.insert(Action::FocusNext, vec!["tab".to_string()]);
         bindings.insert(Action::FocusPrev, vec!["shift-backtab".to_string()]);
         bindings.insert(Action::ToggleSplit, vec![" ".to_string()]);
