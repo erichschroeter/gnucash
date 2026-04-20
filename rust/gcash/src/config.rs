@@ -1,7 +1,7 @@
+use crate::error::AppError;
 use config::{Config, File, FileFormat};
 use serde::Deserialize;
 use std::collections::HashMap;
-use crate::error::AppError;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Deserialize)]
 #[serde(rename_all = "snake_case")]
@@ -35,7 +35,10 @@ impl AppSettings {
         bindings.insert(Action::ViewMode, vec!["v".to_string()]);
         bindings.insert(Action::EditMode, vec!["e".to_string()]);
         bindings.insert(Action::MoveLeft, vec!["h".to_string(), "left".to_string()]);
-        bindings.insert(Action::MoveRight, vec!["l".to_string(), "right".to_string()]);
+        bindings.insert(
+            Action::MoveRight,
+            vec!["l".to_string(), "right".to_string()],
+        );
         bindings.insert(Action::MoveUp, vec!["k".to_string(), "up".to_string()]);
         bindings.insert(Action::MoveDown, vec!["j".to_string(), "down".to_string()]);
         bindings.insert(Action::EditEntry, vec!["enter".to_string()]);
@@ -66,7 +69,8 @@ pub fn load_config(cli_config_path: Option<&String>) -> Result<AppSettings, AppE
     let mut builder = Config::builder();
 
     // 3. Lowest Priority: System-wide default
-    builder = builder.add_source(File::new("/etc/gcash/default.yml", FileFormat::Yaml).required(false));
+    builder =
+        builder.add_source(File::new("/etc/gcash/default.yml", FileFormat::Yaml).required(false));
 
     // 2. Middle Priority: User-specific default
     if let Some(mut home_path) = dirs::home_dir() {
@@ -97,9 +101,11 @@ mod tests {
     #[test]
     fn test_load_config_from_cli_path() {
         // Unindent cleans up the formatting of the multiline string literal
-        let config_content = unindent(r#"
+        let config_content = unindent(
+            r#"
             database_url: "sqlite://test.db"
-        "#);
+        "#,
+        );
 
         // Tempfile ensures isolated test environments that clean themselves up
         let mut temp_file = NamedTempFile::new().expect("Failed to create temp file");
@@ -113,11 +119,13 @@ mod tests {
 
     #[test]
     fn test_load_config_with_keybindings() {
-        let config_content = unindent(r#"
+        let config_content = unindent(
+            r#"
             keybindings:
                 quit: ["ctrl-c"]
                 move_left: ["h", "left"]
-        "#);
+        "#,
+        );
 
         let mut temp_file = NamedTempFile::new().expect("Failed to create temp file");
         write!(temp_file, "{}", config_content).expect("Failed to write to temp file");
@@ -125,10 +133,16 @@ mod tests {
         let temp_path = temp_file.path().to_string_lossy().to_string();
         let settings = load_config(Some(&temp_path)).expect("Failed to load config");
 
-        let quit_bindings = settings.keybindings.get(&Action::Quit).expect("Quit action not found");
+        let quit_bindings = settings
+            .keybindings
+            .get(&Action::Quit)
+            .expect("Quit action not found");
         assert!(quit_bindings.contains(&"ctrl-c".to_string()));
-        
-        let move_left_bindings = settings.keybindings.get(&Action::MoveLeft).expect("MoveLeft action not found");
+
+        let move_left_bindings = settings
+            .keybindings
+            .get(&Action::MoveLeft)
+            .expect("MoveLeft action not found");
         assert!(move_left_bindings.contains(&"h".to_string()));
         assert!(move_left_bindings.contains(&"left".to_string()));
     }

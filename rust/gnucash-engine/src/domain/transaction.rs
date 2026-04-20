@@ -109,7 +109,7 @@ impl Transaction {
     pub fn commodity_id(&self) -> &CommodityId {
         &self.inner.commodity_id
     }
-    
+
     /// Converts back to a draft for editing.
     pub fn into_draft(self) -> DraftTransaction {
         self.inner
@@ -125,13 +125,13 @@ mod tests {
     fn test_valid_transaction() {
         let commodity = CommodityId::new("USD");
         let mut draft = DraftTransaction::new(commodity);
-        
+
         let account1 = AccountId::new();
         let account2 = AccountId::new();
-        
+
         draft = draft.add_split(Split::new(account1, Rational64::new(100, 1)));
         draft = draft.add_split(Split::new(account2, Rational64::new(-100, 1)));
-        
+
         let tx = draft.validate();
         assert!(tx.is_ok());
     }
@@ -140,13 +140,13 @@ mod tests {
     fn test_invalid_transaction() {
         let commodity = CommodityId::new("USD");
         let mut draft = DraftTransaction::new(commodity);
-        
+
         let account1 = AccountId::new();
         let account2 = AccountId::new();
-        
+
         draft = draft.add_split(Split::new(account1, Rational64::new(100, 1)));
         draft = draft.add_split(Split::new(account2, Rational64::new(-50, 1)));
-        
+
         let tx = draft.validate();
         assert!(tx.is_err());
         match tx.unwrap_err() {

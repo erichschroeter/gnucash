@@ -1,6 +1,6 @@
+use num_rational::Rational64;
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
-use num_rational::Rational64;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub struct AccountId(Uuid);

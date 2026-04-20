@@ -1,9 +1,11 @@
-use std::io::{Read, Seek, SeekFrom};
+use super::PersistenceError;
+use crate::domain::{
+    Account, AccountId, AccountType, CommodityId, DraftTransaction, Ledger, Money, Split,
+};
 use flate2::read::GzDecoder;
 use quick_xml::de::from_str;
 use serde::Deserialize;
-use super::PersistenceError;
-use crate::domain::{Account, AccountId, AccountType, CommodityId, Ledger, DraftTransaction, Split, Money};
+use std::io::{Read, Seek, SeekFrom};
 use uuid::Uuid;
 
 #[derive(Debug, Deserialize)]
@@ -78,7 +80,7 @@ pub fn load_from_path(path: &str) -> Result<Ledger, PersistenceError> {
     } else {
         false
     };
-    
+
     file.seek(SeekFrom::Start(0))?;
 
     let mut buffer = Vec::new();
@@ -90,7 +92,7 @@ pub fn load_from_path(path: &str) -> Result<Ledger, PersistenceError> {
     }
 
     let xml_str = std::str::from_utf8(&buffer).map_err(|_| PersistenceError::UnsupportedFormat)?;
-    
+
     // Crude but effective: strip common GnuCash XML prefixes to simplify deserialization
     let xml_stripped = xml_str
         .replace("gnc:", "")
@@ -111,7 +113,9 @@ pub fn load_from_path(path: &str) -> Result<Ledger, PersistenceError> {
     let mut account_id_map = std::collections::HashMap::new();
 
     for raw in gnc.book.accounts {
-        let acc_id = Uuid::parse_str(&raw.id.value).map(AccountId::from).unwrap_or_else(|_| AccountId::new());
+        let acc_id = Uuid::parse_str(&raw.id.value)
+            .map(AccountId::from)
+            .unwrap_or_else(|_| AccountId::new());
         let acc_type = match raw.account_type.as_str() {
             "BANK" => AccountType::Bank,
             "CASH" => AccountType::Cash,
@@ -133,14 +137,19 @@ pub fn load_from_path(path: &str) -> Result<Ledger, PersistenceError> {
     for raw in gnc.book.transactions {
         let mut draft = DraftTransaction::new(CommodityId::new("USD"));
         draft.description = raw.description;
-        
+
         // Parse date (simplified)
-        if let Ok(date) = chrono::DateTime::parse_from_str(&raw.date_posted.date, "%Y-%m-%d %H:%M:%S %z") {
+        if let Ok(date) =
+            chrono::DateTime::parse_from_str(&raw.date_posted.date, "%Y-%m-%d %H:%M:%S %z")
+        {
             draft.date = date.with_timezone(&chrono::Utc);
         }
 
         for s in raw.splits.splits {
-            let acc_id = account_id_map.get(&s.account.value).copied().unwrap_or_else(AccountId::new);
+            let acc_id = account_id_map
+                .get(&s.account.value)
+                .copied()
+                .unwrap_or_else(AccountId::new);
             let amount = parse_money(&s.value).unwrap_or_else(|| Money::new(0, 1));
             draft = draft.add_split(Split::new(acc_id, amount));
         }
@@ -158,7 +167,9 @@ fn parse_money(s: &str) -> Option<Money> {
     if parts.len() == 2 {
         let num = parts[0].parse::<i64>().ok()?;
         let den = parts[1].parse::<i64>().ok()?;
-        if den == 0 { return None; }
+        if den == 0 {
+            return None;
+        }
         Some(Money::new(num, den))
     } else {
         s.parse::<i64>().ok().map(|n| Money::new(n, 1))

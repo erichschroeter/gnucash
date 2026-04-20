@@ -5,8 +5,8 @@ mod tui;
 
 use anyhow::{Context, Result};
 use clap::Parser;
-use std::env;
 use gnucash_engine::domain::Money;
+use std::env;
 
 #[tokio::main]
 async fn main() -> Result<()> {
@@ -53,7 +53,7 @@ async fn main() -> Result<()> {
 
     if cli.interactive {
         log::info!("Entering interactive mode");
-        
+
         let ledger = if let Some(path) = cli.file.as_ref() {
             log::info!("Loading ledger from: {}", path);
             gnucash_engine::persistence::xml::load_from_path(path)
@@ -66,15 +66,20 @@ async fn main() -> Result<()> {
             gnucash_engine::domain::Ledger::default()
         };
 
-        tui::run(ledger, settings).await.context("Fatal error in interactive TUI loop")?;
+        tui::run(ledger, settings)
+            .await
+            .context("Fatal error in interactive TUI loop")?;
     } else {
         log::info!("Running in foreground mode");
         println!("Gcash foreground executing...");
-        println!("Configuration loaded. Database URL: {:?}", settings.database_url);
-        
+        println!(
+            "Configuration loaded. Database URL: {:?}",
+            settings.database_url
+        );
+
         let test_money = Money::new(100, 1);
         println!("Testing gnucash-engine Money type: {:?}", test_money);
-        
+
         println!("Run with --interactive to enter the UI.");
     }
 

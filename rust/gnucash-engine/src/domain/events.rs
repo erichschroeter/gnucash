@@ -8,7 +8,7 @@ pub enum Command {
     CreateAccount(Account),
     UpdateAccount(Account),
     DeleteAccount(AccountId),
-    
+
     RecordTransaction(Transaction),
     UpdateTransaction(Transaction),
     DeleteTransaction(TransactionId),
