@@ -13,7 +13,11 @@ use ratatui::{
     widgets::{Block, Borders, Cell, Paragraph, Row, Table, Tabs},
     Terminal,
 };
-use std::{collections::HashMap, io, time::{Duration, Instant}};
+use std::{
+    collections::HashMap,
+    io,
+    time::{Duration, Instant},
+};
 use tokio::sync::mpsc;
 
 /// TUI events handled by the async event loop.
@@ -30,9 +34,23 @@ pub enum AppState {
     Search,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum EditTarget {
+    Account(AccountId),
+    Transaction(gnucash_engine::domain::TransactionId),
+}
+
+pub struct EditState {
+    pub target: EditTarget,
+    pub fields: Vec<String>,
+    pub active_field_index: usize,
+    pub cursor_position: usize,
+}
+
 /// The core Model for the interactive application.
 pub struct App {
     pub state: AppState,
+    pub edit_state: Option<EditState>,
     pub should_quit: bool,
     pub ledger: Ledger,
     pub tab_index: usize,
@@ -66,6 +84,7 @@ impl App {
 
         Self {
             state: AppState::View,
+            edit_state: None,
             should_quit: false,
             ledger,
             tab_index: 0,
@@ -80,7 +99,9 @@ impl App {
         if query.is_empty() {
             return true;
         }
-        self.ledger.transactions.iter()
+        self.ledger
+            .transactions
+            .iter()
             .filter(|tx| tx.splits().iter().any(|s| s.account_id == *account_id))
             .any(|tx| tx.description().to_lowercase().contains(query))
     }
@@ -88,12 +109,16 @@ impl App {
     fn current_row_count(&self) -> usize {
         let query = self.search_query.to_lowercase();
         if self.tab_index == 0 {
-            self.ledger.accounts.iter()
+            self.ledger
+                .accounts
+                .iter()
                 .filter(|a| self.account_has_matching_transaction(&a.id, &query))
                 .count()
         } else {
             let active_id = self.active_accounts[self.tab_index - 1];
-            self.ledger.transactions.iter()
+            self.ledger
+                .transactions
+                .iter()
                 .filter(|tx| tx.splits().iter().any(|s| s.account_id == active_id))
                 .filter(|tx| query.is_empty() || tx.description().to_lowercase().contains(&query))
                 .count()
@@ -105,6 +130,167 @@ impl App {
         if let Event::Key(key) = event {
             // Only trigger on key press down
             if key.kind == KeyEventKind::Press {
+                let key_str = key_to_string(&key);
+                let action = self.key_map.get(&key_str).copied();
+
+                if self.state == AppState::Edit {
+                    if let Some(ref mut edit_state) = self.edit_state {
+                        if action == Some(Action::FocusNext) || key.code == KeyCode::Tab {
+                            let len = edit_state.fields.len();
+                            edit_state.active_field_index =
+                                (edit_state.active_field_index + 1) % len;
+                            edit_state.cursor_position = edit_state.fields
+                                [edit_state.active_field_index]
+                                .chars()
+                                .count();
+                        } else if action == Some(Action::FocusPrev) || key.code == KeyCode::BackTab
+                        {
+                            let len = edit_state.fields.len();
+                            edit_state.active_field_index =
+                                (edit_state.active_field_index + len - 1) % len;
+                            edit_state.cursor_position = edit_state.fields
+                                [edit_state.active_field_index]
+                                .chars()
+                                .count();
+                        } else if action == Some(Action::MoveLeft) || key.code == KeyCode::Left {
+                            if edit_state.cursor_position > 0 {
+                                edit_state.cursor_position -= 1;
+                            }
+                        } else if action == Some(Action::MoveRight) || key.code == KeyCode::Right {
+                            let len = edit_state.fields[edit_state.active_field_index]
+                                .chars()
+                                .count();
+                            if edit_state.cursor_position < len {
+                                edit_state.cursor_position += 1;
+                            }
+                        } else {
+                            match key.code {
+                                KeyCode::Char(c) => {
+                                    let field =
+                                        &mut edit_state.fields[edit_state.active_field_index];
+                                    let mut chars: Vec<char> = field.chars().collect();
+                                    chars.insert(edit_state.cursor_position, c);
+                                    *field = chars.into_iter().collect();
+                                    edit_state.cursor_position += 1;
+                                }
+                                KeyCode::Backspace => {
+                                    if edit_state.cursor_position > 0 {
+                                        let field =
+                                            &mut edit_state.fields[edit_state.active_field_index];
+                                        let mut chars: Vec<char> = field.chars().collect();
+                                        chars.remove(edit_state.cursor_position - 1);
+                                        *field = chars.into_iter().collect();
+                                        edit_state.cursor_position -= 1;
+                                    }
+                                }
+                                KeyCode::Delete => {
+                                    let field =
+                                        &mut edit_state.fields[edit_state.active_field_index];
+                                    let mut chars: Vec<char> = field.chars().collect();
+                                    if edit_state.cursor_position < chars.len() {
+                                        chars.remove(edit_state.cursor_position);
+                                        *field = chars.into_iter().collect();
+                                    }
+                                }
+                                KeyCode::Enter => {
+                                    // Save changes
+                                    let mut new_tx_draft = None;
+                                    let mut target_tx_id = None;
+                                    match edit_state.target.clone() {
+                                        EditTarget::Account(acc_id) => {
+                                            if let Some(acc) = self
+                                                .ledger
+                                                .accounts
+                                                .iter_mut()
+                                                .find(|a| a.id == acc_id)
+                                            {
+                                                acc.name = edit_state.fields[0].clone();
+                                            }
+                                        }
+                                        EditTarget::Transaction(tx_id) => {
+                                            if let Some(tx) = self
+                                                .ledger
+                                                .transactions
+                                                .iter()
+                                                .find(|t| t.id() == tx_id)
+                                            {
+                                                let mut draft = tx.clone().into_draft();
+                                                // Parse date (simple format check)
+                                                if let Ok(date) = chrono::NaiveDate::parse_from_str(
+                                                    &edit_state.fields[0],
+                                                    "%Y-%m-%d",
+                                                ) {
+                                                    let datetime = chrono::DateTime::<chrono::Utc>::from_naive_utc_and_offset(date.and_hms_opt(0, 0, 0).unwrap(), chrono::Utc);
+                                                    draft = draft.with_date(datetime);
+                                                }
+                                                draft = draft
+                                                    .with_description(edit_state.fields[1].clone());
+
+                                                // Parse Amount
+                                                if let Ok(val) = edit_state.fields[2].parse::<f64>()
+                                                {
+                                                    use num_rational::Rational64;
+                                                    let amount = Rational64::new(
+                                                        (val * 100.0).round() as i64,
+                                                        100,
+                                                    );
+
+                                                    let active_id =
+                                                        self.active_accounts[self.tab_index - 1];
+                                                    // Find and update active split
+                                                    if let Some(pos) = draft
+                                                        .splits
+                                                        .iter()
+                                                        .position(|s| s.account_id == active_id)
+                                                    {
+                                                        draft.splits[pos].amount = amount;
+
+                                                        // If exactly 2 splits, balance it
+                                                        if draft.splits.len() == 2 {
+                                                            let other_pos = 1 - pos;
+                                                            draft.splits[other_pos].amount =
+                                                                -amount;
+                                                        }
+                                                    }
+                                                }
+
+                                                new_tx_draft = Some(draft);
+                                                target_tx_id = Some(tx_id);
+                                            }
+                                        }
+                                    }
+
+                                    if let Some(draft) = new_tx_draft {
+                                        if let Ok(valid_tx) = draft.validate() {
+                                            if let Some(id) = target_tx_id {
+                                                if let Some(pos) = self
+                                                    .ledger
+                                                    .transactions
+                                                    .iter()
+                                                    .position(|t| t.id() == id)
+                                                {
+                                                    self.ledger.transactions[pos] = valid_tx;
+                                                }
+                                            }
+                                        }
+                                    }
+
+                                    self.state = AppState::View;
+                                    self.edit_state = None;
+                                }
+                                KeyCode::Esc => {
+                                    self.state = AppState::View;
+                                    self.edit_state = None;
+                                }
+                                _ => {}
+                            }
+                        }
+                    } else if key.code == KeyCode::Esc {
+                        self.state = AppState::View;
+                    }
+                    return;
+                }
+
                 // If in search mode, capture raw typing instead of action map
                 if self.state == AppState::Search {
                     match key.code {
@@ -134,13 +320,64 @@ impl App {
                     return;
                 }
 
-                let key_str = key_to_string(&key);
-                if let Some(action) = self.key_map.get(&key_str) {
+                if let Some(action) = action {
                     match action {
                         Action::Quit => self.should_quit = true,
                         Action::ViewMode => self.state = AppState::View,
-                        Action::EditMode => self.state = AppState::Edit,
                         Action::Search => self.state = AppState::Search,
+                        Action::EditMode | Action::EditEntry => {
+                            if self.state == AppState::View {
+                                if self.tab_index == 0 {
+                                    if let Some(acc_id) = self.get_selected_account() {
+                                        if let Some(acc) =
+                                            self.ledger.accounts.iter().find(|a| a.id == acc_id)
+                                        {
+                                            self.edit_state = Some(EditState {
+                                                target: EditTarget::Account(acc_id),
+                                                fields: vec![acc.name.clone()],
+                                                active_field_index: 0,
+                                                cursor_position: acc.name.chars().count(),
+                                            });
+                                            self.state = AppState::Edit;
+                                        }
+                                    }
+                                } else {
+                                    if let Some(tx_id) = self.get_selected_transaction() {
+                                        if let Some(tx) = self
+                                            .ledger
+                                            .transactions
+                                            .iter()
+                                            .find(|t| t.id() == tx_id)
+                                        {
+                                            let active_id =
+                                                self.active_accounts[self.tab_index - 1];
+                                            let active_split = tx
+                                                .splits()
+                                                .iter()
+                                                .find(|s| s.account_id == active_id)
+                                                .expect("Active split not found");
+                                            let amount_str = format!(
+                                                "{:.2}",
+                                                active_split.amount.to_f64().unwrap_or(0.0)
+                                            );
+                                            let fields = vec![
+                                                tx.date().format("%Y-%m-%d").to_string(),
+                                                tx.description().to_string(),
+                                                amount_str,
+                                            ];
+                                            let cursor_position = fields[0].chars().count();
+                                            self.edit_state = Some(EditState {
+                                                target: EditTarget::Transaction(tx_id),
+                                                fields,
+                                                active_field_index: 0,
+                                                cursor_position,
+                                            });
+                                            self.state = AppState::Edit;
+                                        }
+                                    }
+                                }
+                            }
+                        }
                         Action::MoveRight | Action::FocusNext => {
                             let total_tabs = self.active_accounts.len() + 1;
                             self.tab_index = (self.tab_index + 1) % total_tabs;
@@ -202,6 +439,45 @@ impl App {
             .find(|a| a.id == *id)
             .map(|a| a.name.clone())
             .unwrap_or_else(|| "Unknown".to_string())
+    }
+
+    fn get_selected_account(&self) -> Option<AccountId> {
+        if self.tab_index == 0 {
+            let query = self.search_query.to_lowercase();
+            let mut iter = self
+                .ledger
+                .accounts
+                .iter()
+                .filter(|a| self.account_has_matching_transaction(&a.id, &query));
+            if let Some(i) = self.table_state.selected() {
+                iter.nth(i).map(|a| a.id)
+            } else {
+                None
+            }
+        } else {
+            None
+        }
+    }
+
+    fn get_selected_transaction(&self) -> Option<gnucash_engine::domain::TransactionId> {
+        if self.tab_index > 0 {
+            let active_id = self.active_accounts[self.tab_index - 1];
+            let query = self.search_query.to_lowercase();
+            let mut iter = self
+                .ledger
+                .transactions
+                .iter()
+                .filter(|tx| tx.splits().iter().any(|s| s.account_id == active_id))
+                .filter(|tx| query.is_empty() || tx.description().to_lowercase().contains(&query));
+
+            if let Some(i) = self.table_state.selected() {
+                iter.nth(i).map(|tx| tx.id())
+            } else {
+                None
+            }
+        } else {
+            None
+        }
     }
 }
 
@@ -455,12 +731,61 @@ pub async fn run(ledger: Ledger, settings: AppSettings) -> Result<(), AppError> 
                     }
                 }
                 AppState::Edit => {
-                    let content = Paragraph::new(
-                        "Edit Mode: Feature not yet implemented.\nPress 'v' to return to View.",
-                    )
-                    .block(Block::default().borders(Borders::ALL))
-                    .alignment(Alignment::Center);
-                    f.render_widget(content, layout[3]);
+                    if let Some(ref edit_state) = app.edit_state {
+                        let title = match edit_state.target {
+                            EditTarget::Account(_) => "Edit Account",
+                            EditTarget::Transaction(_) => "Edit Transaction",
+                        };
+
+                        let labels = match edit_state.target {
+                            EditTarget::Account(_) => vec!["Name"],
+                            EditTarget::Transaction(_) => vec!["Date (YYYY-MM-DD)", "Description", "Amount"],
+                        };
+
+                        let mut text = vec![
+                            ratatui::text::Line::from("Press Enter to save, Esc to cancel. Tab/Shift-Tab to switch fields."),
+                            ratatui::text::Line::from(""),
+                        ];
+
+                        let mut cursor_pos = None;
+
+                        for (i, label) in labels.iter().enumerate() {
+                            let is_active = i == edit_state.active_field_index;
+                            let prefix = if is_active { "> " } else { "  " };
+                            let val = &edit_state.fields[i];
+                            let style = if is_active {
+                                ratatui::style::Style::default()
+                                    .add_modifier(ratatui::style::Modifier::BOLD)
+                                    .fg(ratatui::style::Color::Yellow)
+                            } else {
+                                ratatui::style::Style::default()
+                            };
+                            text.push(ratatui::text::Line::styled(
+                                format!("{}{}: {}", prefix, label, val),
+                                style,
+                            ));
+
+                            if is_active {
+                                let x = layout[3].x + 1 + (prefix.chars().count() + label.chars().count() + 2 + edit_state.cursor_position) as u16;
+                                let y = layout[3].y + 1 + 2 + i as u16;
+                                cursor_pos = Some((x, y));
+                            }
+                        }
+
+                        let content = Paragraph::new(text)
+                            .block(Block::default().borders(Borders::ALL).title(title))
+                            .alignment(Alignment::Left);
+                        f.render_widget(content, layout[3]);
+
+                        if let Some((x, y)) = cursor_pos {
+                            f.set_cursor(x, y);
+                        }
+                    } else {
+                        let content = Paragraph::new("No item selected for editing.")
+                            .block(Block::default().borders(Borders::ALL))
+                            .alignment(Alignment::Center);
+                        f.render_widget(content, layout[3]);
+                    }
                 }
             };
 
@@ -519,7 +844,7 @@ mod tests {
             .add_split(split2)
             .validate()
             .unwrap();
-            
+
         let split3 = Split::new(account1.id, Rational64::new(-15, 1));
         let split4 = Split::new(account3.id, Rational64::new(15, 1));
 
@@ -566,9 +891,16 @@ mod tests {
     fn test_view_mode_action() {
         let mut app = get_app_with_defaults();
         app.state = AppState::Edit; // Start in Edit mode
+        app.edit_state = Some(EditState {
+            target: EditTarget::Account(app.active_accounts[0]),
+            fields: vec!["test".to_string()],
+            active_field_index: 0,
+            cursor_position: 4,
+        });
 
-        app.update(make_key_event(KeyCode::Char('v'), KeyModifiers::empty()));
+        app.update(make_key_event(KeyCode::Esc, KeyModifiers::empty()));
         assert!(matches!(app.state, AppState::View));
+        assert!(app.edit_state.is_none());
     }
 
     #[test]
@@ -623,12 +955,195 @@ mod tests {
     }
 
     #[test]
+    fn test_edit_account_name() {
+        let mut app = get_app_with_defaults();
+        assert_eq!(app.tab_index, 0); // Overview
+        app.table_state.select(Some(0)); // Select "Checking"
+
+        // Press Enter to edit
+        app.update(make_key_event(KeyCode::Enter, KeyModifiers::empty()));
+        assert!(matches!(app.state, AppState::Edit));
+
+        if let Some(edit_state) = &app.edit_state {
+            assert_eq!(edit_state.fields[0], "Checking");
+        } else {
+            panic!("Expected edit state to be populated");
+        }
+
+        // Add " Bank" to the name
+        app.update(make_key_event(KeyCode::Char(' '), KeyModifiers::empty()));
+        app.update(make_key_event(KeyCode::Char('B'), KeyModifiers::empty()));
+        app.update(make_key_event(KeyCode::Char('a'), KeyModifiers::empty()));
+        app.update(make_key_event(KeyCode::Char('n'), KeyModifiers::empty()));
+        app.update(make_key_event(KeyCode::Char('k'), KeyModifiers::empty()));
+
+        // Press Enter to save
+        app.update(make_key_event(KeyCode::Enter, KeyModifiers::empty()));
+        assert!(matches!(app.state, AppState::View));
+        assert!(app.edit_state.is_none());
+
+        assert_eq!(app.ledger.accounts[0].name, "Checking Bank");
+    }
+
+    #[test]
+    fn test_edit_cursor_navigation() {
+        let mut app = get_app_with_defaults();
+        app.tab_index = 0;
+        app.table_state.select(Some(0)); // Select "Checking"
+
+        // Enter edit mode
+        app.update(make_key_event(KeyCode::Enter, KeyModifiers::empty()));
+        assert!(matches!(app.state, AppState::Edit));
+
+        if let Some(edit_state) = &app.edit_state {
+            assert_eq!(edit_state.fields[0], "Checking");
+            assert_eq!(edit_state.cursor_position, 8); // end of string
+        } else {
+            panic!("Expected edit state");
+        }
+
+        // Move left 3 times
+        app.update(make_key_event(KeyCode::Left, KeyModifiers::empty()));
+        app.update(make_key_event(KeyCode::Left, KeyModifiers::empty()));
+        app.update(make_key_event(KeyCode::Left, KeyModifiers::empty()));
+
+        if let Some(edit_state) = &app.edit_state {
+            assert_eq!(edit_state.cursor_position, 5); // between 'k' and 'i'
+        }
+
+        // Insert 'x'
+        app.update(make_key_event(KeyCode::Char('x'), KeyModifiers::empty()));
+
+        if let Some(edit_state) = &app.edit_state {
+            assert_eq!(edit_state.fields[0], "Checkxing");
+            assert_eq!(edit_state.cursor_position, 6);
+        }
+
+        // Backspace
+        app.update(make_key_event(KeyCode::Backspace, KeyModifiers::empty()));
+
+        if let Some(edit_state) = &app.edit_state {
+            assert_eq!(edit_state.fields[0], "Checking");
+            assert_eq!(edit_state.cursor_position, 5);
+        }
+
+        // Delete
+        app.update(make_key_event(KeyCode::Delete, KeyModifiers::empty()));
+
+        if let Some(edit_state) = &app.edit_state {
+            assert_eq!(edit_state.fields[0], "Checkng");
+            assert_eq!(edit_state.cursor_position, 5);
+        }
+
+        // Move Right
+        app.update(make_key_event(KeyCode::Right, KeyModifiers::empty()));
+        if let Some(edit_state) = &app.edit_state {
+            assert_eq!(edit_state.cursor_position, 6);
+        }
+    }
+
+    #[test]
+    fn test_edit_transaction_description() {
+        let mut app = get_app_with_defaults();
+        // Go to Checking account tab
+        app.update(make_key_event(KeyCode::Tab, KeyModifiers::empty()));
+        assert_eq!(app.tab_index, 1);
+        app.table_state.select(Some(0)); // Select first transaction ("Walmart")
+
+        // Press Enter to edit
+        app.update(make_key_event(KeyCode::Enter, KeyModifiers::empty()));
+        assert!(matches!(app.state, AppState::Edit));
+
+        if let Some(edit_state) = &app.edit_state {
+            assert_eq!(edit_state.fields[1], "Walmart");
+            assert_eq!(edit_state.active_field_index, 0); // starts at Date
+        } else {
+            panic!("Expected edit state to be populated");
+        }
+
+        // Tab to Description field
+        app.update(make_key_event(KeyCode::Tab, KeyModifiers::empty()));
+        if let Some(edit_state) = &app.edit_state {
+            assert_eq!(edit_state.active_field_index, 1);
+        }
+
+        // Backspace to delete 't' then add "mart" to make it "Walmarmart" (just something different)
+        app.update(make_key_event(KeyCode::Backspace, KeyModifiers::empty()));
+        app.update(make_key_event(KeyCode::Char('s'), KeyModifiers::empty()));
+
+        // Press Enter to save
+        app.update(make_key_event(KeyCode::Enter, KeyModifiers::empty()));
+        assert!(matches!(app.state, AppState::View));
+
+        assert_eq!(app.ledger.transactions[0].description(), "Walmars");
+    }
+
+    #[test]
+    fn test_edit_transaction_amount() {
+        let mut app = get_app_with_defaults();
+        // Go to Checking account tab
+        app.update(make_key_event(KeyCode::Tab, KeyModifiers::empty()));
+        assert_eq!(app.tab_index, 1);
+        app.table_state.select(Some(0)); // Select first transaction ("Walmart")
+
+        // Press Enter to edit
+        app.update(make_key_event(KeyCode::Enter, KeyModifiers::empty()));
+        assert!(matches!(app.state, AppState::Edit));
+
+        if let Some(edit_state) = &app.edit_state {
+            assert_eq!(edit_state.fields[2], "-100.00");
+        } else {
+            panic!("Expected edit state to be populated");
+        }
+
+        // Tab twice to Amount field
+        app.update(make_key_event(KeyCode::Tab, KeyModifiers::empty()));
+        app.update(make_key_event(KeyCode::Tab, KeyModifiers::empty()));
+        if let Some(edit_state) = &app.edit_state {
+            assert_eq!(edit_state.active_field_index, 2);
+        }
+
+        // Clear existing amount
+        for _ in 0..7 {
+            app.update(make_key_event(KeyCode::Backspace, KeyModifiers::empty()));
+        }
+
+        // Type new amount -123.45
+        for c in "-123.45".chars() {
+            app.update(make_key_event(KeyCode::Char(c), KeyModifiers::empty()));
+        }
+
+        // Press Enter to save
+        app.update(make_key_event(KeyCode::Enter, KeyModifiers::empty()));
+        assert!(matches!(app.state, AppState::View));
+
+        let tx = &app.ledger.transactions[0];
+        let active_id = app.active_accounts[0]; // Checking account
+        let active_split = tx
+            .splits()
+            .iter()
+            .find(|s| s.account_id == active_id)
+            .unwrap();
+        assert_eq!(active_split.amount, Rational64::new(-12345, 100));
+
+        let other_split = tx
+            .splits()
+            .iter()
+            .find(|s| s.account_id != active_id)
+            .unwrap();
+        assert_eq!(other_split.amount, Rational64::new(12345, 100));
+    }
+
+    #[test]
     fn test_edit_mode_action() {
         let mut app = get_app_with_defaults();
         assert!(matches!(app.state, AppState::View)); // Start in View mode
+        app.table_state.select(Some(0)); // Select an account
 
-        app.update(make_key_event(KeyCode::Char('e'), KeyModifiers::empty()));
+        // 'enter' should trigger EditEntry
+        app.update(make_key_event(KeyCode::Enter, KeyModifiers::empty()));
         assert!(matches!(app.state, AppState::Edit));
+        assert!(app.edit_state.is_some());
     }
 
     #[test]
