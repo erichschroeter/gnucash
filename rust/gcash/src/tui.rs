@@ -13,7 +13,7 @@ use ratatui::{
     widgets::{Block, Borders, Cell, Paragraph, Row, Table, Tabs},
     Terminal,
 };
-use std::{collections::HashMap, io, time::Duration};
+use std::{collections::HashMap, io, time::{Duration, Instant}};
 use tokio::sync::mpsc;
 
 /// TUI events handled by the async event loop.
@@ -251,20 +251,29 @@ pub async fn run(ledger: Ledger, settings: AppSettings) -> Result<(), AppError> 
 
     // Spawn a separate async task to listen to keyboard events without blocking the render loop
     tokio::spawn(async move {
+        let mut last_tick = Instant::now();
         loop {
-            // Poll for crossterm events
-            if event::poll(Duration::from_millis(50)).unwrap_or(false) {
+            // Calculate how much time is left until the next tick
+            let timeout = tick_rate
+                .checked_sub(last_tick.elapsed())
+                .unwrap_or(Duration::from_secs(0));
+
+            // Poll for crossterm events with the remaining time
+            if event::poll(timeout).unwrap_or(false) {
                 if let Ok(CrosstermEvent::Key(key)) = event::read() {
                     if tx.send(Event::Key(key)).await.is_err() {
                         break;
                     }
                 }
             }
-            // Send tick event to enforce screen refreshes/animation even without input
-            if tx.send(Event::Tick).await.is_err() {
-                break;
+
+            // If enough time has passed, send a tick event and reset the timer
+            if last_tick.elapsed() >= tick_rate {
+                if tx.send(Event::Tick).await.is_err() {
+                    break;
+                }
+                last_tick = Instant::now();
             }
-            tokio::time::sleep(tick_rate).await;
         }
     });
 
