@@ -23,9 +23,11 @@ pub enum Event {
 }
 
 /// Application view states for Model-View-Update architecture.
+#[derive(PartialEq, Eq)]
 pub enum AppState {
     View,
     Edit,
+    Search,
 }
 
 /// The core Model for the interactive application.
@@ -37,6 +39,7 @@ pub struct App {
     pub active_accounts: Vec<AccountId>,
     pub key_map: HashMap<String, Action>,
     pub table_state: ratatui::widgets::TableState,
+    pub search_query: String,
 }
 
 impl App {
@@ -69,16 +72,30 @@ impl App {
             active_accounts,
             key_map,
             table_state,
+            search_query: String::new(),
         }
     }
 
+    fn account_has_matching_transaction(&self, account_id: &AccountId, query: &str) -> bool {
+        if query.is_empty() {
+            return true;
+        }
+        self.ledger.transactions.iter()
+            .filter(|tx| tx.splits().iter().any(|s| s.account_id == *account_id))
+            .any(|tx| tx.description().to_lowercase().contains(query))
+    }
+
     fn current_row_count(&self) -> usize {
+        let query = self.search_query.to_lowercase();
         if self.tab_index == 0 {
-            self.ledger.accounts.len()
+            self.ledger.accounts.iter()
+                .filter(|a| self.account_has_matching_transaction(&a.id, &query))
+                .count()
         } else {
             let active_id = self.active_accounts[self.tab_index - 1];
             self.ledger.transactions.iter()
                 .filter(|tx| tx.splits().iter().any(|s| s.account_id == active_id))
+                .filter(|tx| query.is_empty() || tx.description().to_lowercase().contains(&query))
                 .count()
         }
     }
@@ -88,12 +105,42 @@ impl App {
         if let Event::Key(key) = event {
             // Only trigger on key press down
             if key.kind == KeyEventKind::Press {
+                // If in search mode, capture raw typing instead of action map
+                if self.state == AppState::Search {
+                    match key.code {
+                        KeyCode::Char(c) => self.search_query.push(c),
+                        KeyCode::Backspace => {
+                            self.search_query.pop();
+                        }
+                        KeyCode::Enter => self.state = AppState::View,
+                        KeyCode::Esc => {
+                            self.search_query.clear();
+                            self.state = AppState::View;
+                            self.table_state.select(Some(0));
+                        }
+                        _ => {}
+                    }
+                    // Reset selection when filtering changes
+                    let max = self.current_row_count();
+                    if let Some(i) = self.table_state.selected() {
+                        if max == 0 {
+                            self.table_state.select(None);
+                        } else if i >= max {
+                            self.table_state.select(Some(max - 1));
+                        }
+                    } else if max > 0 {
+                        self.table_state.select(Some(0));
+                    }
+                    return;
+                }
+
                 let key_str = key_to_string(&key);
                 if let Some(action) = self.key_map.get(&key_str) {
                     match action {
                         Action::Quit => self.should_quit = true,
                         Action::ViewMode => self.state = AppState::View,
                         Action::EditMode => self.state = AppState::Edit,
+                        Action::Search => self.state = AppState::Search,
                         Action::MoveRight | Action::FocusNext => {
                             let total_tabs = self.active_accounts.len() + 1;
                             self.tab_index = (self.tab_index + 1) % total_tabs;
@@ -112,7 +159,13 @@ impl App {
                             let max = self.current_row_count();
                             if max > 0 {
                                 let i = match self.table_state.selected() {
-                                    Some(i) => if i >= max - 1 { max - 1 } else { i + 1 },
+                                    Some(i) => {
+                                        if i >= max - 1 {
+                                            max - 1
+                                        } else {
+                                            i + 1
+                                        }
+                                    }
                                     None => 0,
                                 };
                                 self.table_state.select(Some(i));
@@ -122,7 +175,13 @@ impl App {
                             let max = self.current_row_count();
                             if max > 0 {
                                 let i = match self.table_state.selected() {
-                                    Some(i) => if i == 0 { 0 } else { i - 1 },
+                                    Some(i) => {
+                                        if i == 0 {
+                                            0
+                                        } else {
+                                            i - 1
+                                        }
+                                    }
                                     None => 0,
                                 };
                                 self.table_state.select(Some(i));
@@ -215,13 +274,21 @@ pub async fn run(ledger: Ledger, settings: AppSettings) -> Result<(), AppError> 
     loop {
         terminal.draw(|f| {
             let size = f.size();
+
+            let search_height = if app.state == AppState::Search || !app.search_query.is_empty() {
+                3
+            } else {
+                0
+            };
+
             let layout = Layout::default()
                 .direction(Direction::Vertical)
                 .constraints([
-                    Constraint::Length(1), // Title
-                    Constraint::Length(3), // Tabs
-                    Constraint::Min(0),    // Content
-                    Constraint::Length(1), // Footer
+                    Constraint::Length(1),             // Title
+                    Constraint::Length(3),             // Tabs
+                    Constraint::Length(search_height), // Search Prompt
+                    Constraint::Min(0),                // Content
+                    Constraint::Length(1),             // Footer
                 ])
                 .split(size);
 
@@ -245,14 +312,31 @@ pub async fn run(ledger: Ledger, settings: AppSettings) -> Result<(), AppError> 
                 );
             f.render_widget(tabs, layout[1]);
 
+            if search_height > 0 {
+                let border_style = if app.state == AppState::Search {
+                    ratatui::style::Style::default().fg(ratatui::style::Color::Yellow)
+                } else {
+                    ratatui::style::Style::default()
+                };
+                let search_block = Paragraph::new(app.search_query.clone()).block(
+                    Block::default()
+                        .borders(Borders::ALL)
+                        .title("Search")
+                        .border_style(border_style),
+                );
+                f.render_widget(search_block, layout[2]);
+            }
+
             match app.state {
-                AppState::View => {
+                AppState::View | AppState::Search => {
+                    let query = app.search_query.to_lowercase();
                     if app.tab_index == 0 {
                         // Render Accounts Overview
                         let rows: Vec<Row> = app
                             .ledger
                             .accounts
                             .iter()
+                            .filter(|a| app.account_has_matching_transaction(&a.id, &query))
                             .map(|acc| {
                                 Row::new(vec![
                                     Cell::from(acc.name.clone()),
@@ -283,7 +367,7 @@ pub async fn run(ledger: Ledger, settings: AppSettings) -> Result<(), AppError> 
                         )
                         .column_spacing(1);
 
-                        f.render_stateful_widget(table, layout[2], &mut app.table_state);
+                        f.render_stateful_widget(table, layout[3], &mut app.table_state);
                     } else {
                         // Render Specific Account Register
                         let active_id = app.active_accounts[app.tab_index - 1];
@@ -293,6 +377,9 @@ pub async fn run(ledger: Ledger, settings: AppSettings) -> Result<(), AppError> 
                             .transactions
                             .iter()
                             .filter(|tx| tx.splits().iter().any(|s| s.account_id == active_id))
+                            .filter(|tx| {
+                                query.is_empty() || tx.description().to_lowercase().contains(&query)
+                            })
                             .map(|tx| {
                                 let date = tx.date().format("%Y-%m-%d").to_string();
                                 let desc = tx.description().to_string();
@@ -355,7 +442,7 @@ pub async fn run(ledger: Ledger, settings: AppSettings) -> Result<(), AppError> 
                         )
                         .column_spacing(1);
 
-                        f.render_stateful_widget(table, layout[2], &mut app.table_state);
+                        f.render_stateful_widget(table, layout[3], &mut app.table_state);
                     }
                 }
                 AppState::Edit => {
@@ -364,14 +451,15 @@ pub async fn run(ledger: Ledger, settings: AppSettings) -> Result<(), AppError> 
                     )
                     .block(Block::default().borders(Borders::ALL))
                     .alignment(Alignment::Center);
-                    f.render_widget(content, layout[2]);
+                    f.render_widget(content, layout[3]);
                 }
             };
 
-            let footer =
-                Paragraph::new("Arrows/HJKL/Tab: Navigate | 'v': View | 'e': Edit | 'q': Quit")
-                    .alignment(Alignment::Left);
-            f.render_widget(footer, layout[3]);
+            let footer = Paragraph::new(
+                "Arrows/HJKL/Tab: Navigate | '/': Search | 'v': View | 'e': Edit | 'q': Quit",
+            )
+            .alignment(Alignment::Left);
+            f.render_widget(footer, layout[4]);
         })?;
 
         // Handle async events from our channel
@@ -411,17 +499,29 @@ mod tests {
         let commodity = CommodityId::new("USD");
         let account1 = Account::new("Checking", AccountType::Bank, commodity.clone());
         let account2 = Account::new("Groceries", AccountType::Expense, commodity.clone());
+        let account3 = Account::new("Dining", AccountType::Expense, commodity.clone());
 
         let split1 = Split::new(account1.id, Rational64::new(-100, 1));
         let split2 = Split::new(account2.id, Rational64::new(100, 1));
 
-        let tx = DraftTransaction::new(commodity)
+        let tx1 = DraftTransaction::new(commodity.clone())
+            .with_description("Walmart")
             .add_split(split1)
             .add_split(split2)
             .validate()
             .unwrap();
+            
+        let split3 = Split::new(account1.id, Rational64::new(-15, 1));
+        let split4 = Split::new(account3.id, Rational64::new(15, 1));
 
-        Ledger::new(vec![account1, account2], vec![tx])
+        let tx2 = DraftTransaction::new(commodity)
+            .with_description("Jimmy John's")
+            .add_split(split3)
+            .add_split(split4)
+            .validate()
+            .unwrap();
+
+        Ledger::new(vec![account1, account2, account3], vec![tx1, tx2])
     }
 
     fn get_app_with_defaults() -> App {
@@ -463,6 +563,57 @@ mod tests {
     }
 
     #[test]
+    fn test_search_action_and_typing() {
+        let mut app = get_app_with_defaults();
+        assert!(matches!(app.state, AppState::View));
+        assert!(app.search_query.is_empty());
+        assert_eq!(app.current_row_count(), 3); // Checking, Groceries, Dining
+
+        // Pressing '/' should enter search mode
+        app.update(make_key_event(KeyCode::Char('/'), KeyModifiers::empty()));
+        assert!(matches!(app.state, AppState::Search));
+
+        // Typing characters should append to search_query
+        app.update(make_key_event(KeyCode::Char('j'), KeyModifiers::empty()));
+        app.update(make_key_event(KeyCode::Char('i'), KeyModifiers::empty()));
+        app.update(make_key_event(KeyCode::Char('m'), KeyModifiers::empty()));
+        assert_eq!(app.search_query, "jim");
+
+        // The query "jim" should match Jimmy John's, which is associated with Checking and Dining.
+        // Groceries should be filtered out.
+        assert_eq!(app.current_row_count(), 2);
+
+        // Backspace should remove characters
+        app.update(make_key_event(KeyCode::Backspace, KeyModifiers::empty()));
+        assert_eq!(app.search_query, "ji");
+        assert_eq!(app.current_row_count(), 2);
+
+        // Pressing Enter should apply and exit search mode
+        app.update(make_key_event(KeyCode::Enter, KeyModifiers::empty()));
+        assert!(matches!(app.state, AppState::View));
+        assert_eq!(app.search_query, "ji"); // Query should remain
+        assert_eq!(app.current_row_count(), 2);
+    }
+
+    #[test]
+    fn test_search_action_cancel() {
+        let mut app = get_app_with_defaults();
+
+        // Enter search mode
+        app.update(make_key_event(KeyCode::Char('/'), KeyModifiers::empty()));
+        assert!(matches!(app.state, AppState::Search));
+
+        // Type
+        app.update(make_key_event(KeyCode::Char('x'), KeyModifiers::empty()));
+        assert_eq!(app.search_query, "x");
+
+        // Pressing Esc should clear and exit
+        app.update(make_key_event(KeyCode::Esc, KeyModifiers::empty()));
+        assert!(matches!(app.state, AppState::View));
+        assert!(app.search_query.is_empty());
+    }
+
+    #[test]
     fn test_edit_mode_action() {
         let mut app = get_app_with_defaults();
         assert!(matches!(app.state, AppState::View)); // Start in View mode
@@ -484,9 +635,11 @@ mod tests {
         app.update(make_key_event(KeyCode::Right, KeyModifiers::empty()));
         assert_eq!(app.tab_index, 2);
 
-        // 'tab' should move right (FocusNext)
+        // 'tab' should move right (FocusNext) twice to wrap around
         app.update(make_key_event(KeyCode::Tab, KeyModifiers::empty()));
-        assert_eq!(app.tab_index, 0); // Wraps around (2 active accounts + 1 overview = 3 tabs)
+        assert_eq!(app.tab_index, 3);
+        app.update(make_key_event(KeyCode::Tab, KeyModifiers::empty()));
+        assert_eq!(app.tab_index, 0); // Wraps around (3 active accounts + 1 overview = 4 tabs)
     }
 
     #[test]
@@ -494,17 +647,17 @@ mod tests {
         let mut app = get_app_with_defaults();
         assert_eq!(app.tab_index, 0);
 
-        // 'h' should move left (wrapping around to 2)
+        // 'h' should move left (wrapping around to 3)
         app.update(make_key_event(KeyCode::Char('h'), KeyModifiers::empty()));
-        assert_eq!(app.tab_index, 2);
+        assert_eq!(app.tab_index, 3);
 
         // 'left' should move left
         app.update(make_key_event(KeyCode::Left, KeyModifiers::empty()));
-        assert_eq!(app.tab_index, 1);
+        assert_eq!(app.tab_index, 2);
 
         // 'backtab' should move left (FocusPrev)
         app.update(make_key_event(KeyCode::BackTab, KeyModifiers::SHIFT));
-        assert_eq!(app.tab_index, 0);
+        assert_eq!(app.tab_index, 1);
     }
 
     #[test]
@@ -512,19 +665,21 @@ mod tests {
         let mut app = get_app_with_defaults();
         assert_eq!(app.table_state.selected(), Some(0));
 
-        // Total accounts in test_ledger is 2
+        // Total accounts in test_ledger is 3
         app.update(make_key_event(KeyCode::Char('j'), KeyModifiers::empty()));
         assert_eq!(app.table_state.selected(), Some(1));
+        app.update(make_key_event(KeyCode::Char('j'), KeyModifiers::empty()));
+        assert_eq!(app.table_state.selected(), Some(2));
 
-        // Shouldn't go past max bounds (max is 1, length is 2)
+        // Shouldn't go past max bounds (max is 2, length is 3)
         app.update(make_key_event(KeyCode::Char('j'), KeyModifiers::empty()));
-        assert_eq!(app.table_state.selected(), Some(1));
+        assert_eq!(app.table_state.selected(), Some(2));
     }
 
     #[test]
     fn test_move_up_action() {
         let mut app = get_app_with_defaults();
-        
+
         // Setup state to be at the bottom
         app.table_state.select(Some(1));
 
