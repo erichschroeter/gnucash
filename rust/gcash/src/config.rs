@@ -1,11 +1,61 @@
 use config::{Config, File, FileFormat};
 use serde::Deserialize;
+use std::collections::HashMap;
 use crate::error::AppError;
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum Action {
+    Quit,
+    ViewMode,
+    EditMode,
+    MoveLeft,
+    MoveRight,
+    MoveUp,
+    MoveDown,
+    EditEntry,
+    FocusNext,
+    FocusPrev,
+    ToggleSplit,
+    Search,
+}
 
 /// The central application configuration.
 #[derive(Debug, Deserialize)]
 pub struct AppSettings {
     pub database_url: Option<String>,
+    #[serde(default = "AppSettings::default_keybindings")]
+    pub keybindings: HashMap<Action, Vec<String>>,
+}
+
+impl AppSettings {
+    pub fn default_keybindings() -> HashMap<Action, Vec<String>> {
+        let mut bindings = HashMap::new();
+        bindings.insert(Action::Quit, vec!["q".to_string(), "esc".to_string()]);
+        bindings.insert(Action::ViewMode, vec!["v".to_string()]);
+        bindings.insert(Action::EditMode, vec!["e".to_string()]);
+        bindings.insert(Action::MoveLeft, vec!["h".to_string(), "left".to_string()]);
+        bindings.insert(Action::MoveRight, vec!["l".to_string(), "right".to_string()]);
+        bindings.insert(Action::MoveUp, vec!["k".to_string(), "up".to_string()]);
+        bindings.insert(Action::MoveDown, vec!["j".to_string(), "down".to_string()]);
+        bindings.insert(Action::EditEntry, vec!["enter".to_string()]);
+        bindings.insert(Action::FocusNext, vec!["tab".to_string()]);
+        bindings.insert(Action::FocusPrev, vec!["shift-backtab".to_string()]);
+        bindings.insert(Action::ToggleSplit, vec![" ".to_string()]);
+        bindings.insert(Action::Search, vec!["/".to_string(), "ctrl-f".to_string()]);
+        bindings
+    }
+
+    /// Flattens the config into a fast lookup map: "key_string" -> Action
+    pub fn build_key_map(&self) -> HashMap<String, Action> {
+        let mut map = HashMap::new();
+        for (action, keys) in &self.keybindings {
+            for key in keys {
+                map.insert(key.clone(), *action);
+            }
+        }
+        map
+    }
 }
 
 /// Loads configuration settings using a hierarchical fallback mechanism:
@@ -59,5 +109,27 @@ mod tests {
         let settings = load_config(Some(&temp_path)).expect("Failed to load config");
 
         assert_eq!(settings.database_url, Some("sqlite://test.db".to_string()));
+    }
+
+    #[test]
+    fn test_load_config_with_keybindings() {
+        let config_content = unindent(r#"
+            keybindings:
+                quit: ["ctrl-c"]
+                move_left: ["h", "left"]
+        "#);
+
+        let mut temp_file = NamedTempFile::new().expect("Failed to create temp file");
+        write!(temp_file, "{}", config_content).expect("Failed to write to temp file");
+
+        let temp_path = temp_file.path().to_string_lossy().to_string();
+        let settings = load_config(Some(&temp_path)).expect("Failed to load config");
+
+        let quit_bindings = settings.keybindings.get(&Action::Quit).expect("Quit action not found");
+        assert!(quit_bindings.contains(&"ctrl-c".to_string()));
+        
+        let move_left_bindings = settings.keybindings.get(&Action::MoveLeft).expect("MoveLeft action not found");
+        assert!(move_left_bindings.contains(&"h".to_string()));
+        assert!(move_left_bindings.contains(&"left".to_string()));
     }
 }

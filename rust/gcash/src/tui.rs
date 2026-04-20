@@ -1,5 +1,5 @@
 use crossterm::{
-    event::{self, Event as CrosstermEvent, KeyCode, KeyEventKind},
+    event::{self, Event as CrosstermEvent, KeyCode, KeyEvent, KeyEventKind, KeyModifiers},
     terminal::{disable_raw_mode, enable_raw_mode, EnterAlternateScreen, LeaveAlternateScreen},
     ExecutableCommand,
 };
@@ -9,9 +9,10 @@ use ratatui::{
     widgets::{Block, Borders, Paragraph, Table, Row, Cell, Tabs},
     Terminal,
 };
-use std::{io, time::Duration};
+use std::{io, time::Duration, collections::HashMap};
 use tokio::sync::mpsc;
 use crate::error::AppError;
+use crate::config::{Action, AppSettings};
 use gnucash_engine::domain::{Ledger, AccountId};
 use num_traits::ToPrimitive;
 
@@ -34,10 +35,11 @@ pub struct App {
     pub ledger: Ledger,
     pub tab_index: usize,
     pub active_accounts: Vec<AccountId>,
+    pub key_map: HashMap<String, Action>,
 }
 
 impl App {
-    pub fn new(ledger: Ledger) -> Self {
+    pub fn new(ledger: Ledger, key_map: HashMap<String, Action>) -> Self {
         let mut active_accounts = std::collections::HashSet::new();
         for tx in &ledger.transactions {
             for split in tx.splits() {
@@ -59,6 +61,7 @@ impl App {
             ledger,
             tab_index: 0,
             active_accounts,
+            key_map,
         }
     }
 
@@ -67,23 +70,27 @@ impl App {
         if let Event::Key(key) = event {
             // Only trigger on key press down
             if key.kind == KeyEventKind::Press {
-                match key.code {
-                    KeyCode::Char('q') | KeyCode::Esc => self.should_quit = true,
-                    KeyCode::Char('v') => self.state = AppState::View,
-                    KeyCode::Char('e') => self.state = AppState::Edit,
-                    KeyCode::Right | KeyCode::Tab => {
-                        let total_tabs = self.active_accounts.len() + 1;
-                        self.tab_index = (self.tab_index + 1) % total_tabs;
-                    }
-                    KeyCode::Left | KeyCode::BackTab => {
-                        let total_tabs = self.active_accounts.len() + 1;
-                        if self.tab_index == 0 {
-                            self.tab_index = total_tabs - 1;
-                        } else {
-                            self.tab_index -= 1;
+                let key_str = key_to_string(&key);
+                if let Some(action) = self.key_map.get(&key_str) {
+                    match action {
+                        Action::Quit => self.should_quit = true,
+                        Action::ViewMode => self.state = AppState::View,
+                        Action::EditMode => self.state = AppState::Edit,
+                        Action::MoveRight | Action::FocusNext => {
+                            let total_tabs = self.active_accounts.len() + 1;
+                            self.tab_index = (self.tab_index + 1) % total_tabs;
                         }
+                        Action::MoveLeft | Action::FocusPrev => {
+                            let total_tabs = self.active_accounts.len() + 1;
+                            if self.tab_index == 0 {
+                                self.tab_index = total_tabs - 1;
+                            } else {
+                                self.tab_index -= 1;
+                            }
+                        }
+                        // Other actions not yet fully implemented in UI logic
+                        _ => {}
                     }
-                    _ => {}
                 }
             }
         }
@@ -97,8 +104,41 @@ impl App {
     }
 }
 
+pub fn key_to_string(key: &KeyEvent) -> String {
+    let mut s = String::new();
+
+    if key.modifiers.contains(KeyModifiers::CONTROL) {
+        s.push_str("ctrl-");
+    }
+    if key.modifiers.contains(KeyModifiers::ALT) {
+        s.push_str("alt-");
+    }
+    if key.modifiers.contains(KeyModifiers::SHIFT) {
+        if !matches!(key.code, KeyCode::Char(_)) {
+            s.push_str("shift-");
+        }
+    }
+
+    match key.code {
+        KeyCode::Char(c) => s.push(c.to_ascii_lowercase()),
+        KeyCode::Enter => s.push_str("enter"),
+        KeyCode::Esc => s.push_str("esc"),
+        KeyCode::Tab => s.push_str("tab"),
+        KeyCode::BackTab => s.push_str("backtab"),
+        KeyCode::Backspace => s.push_str("backspace"),
+        KeyCode::Up => s.push_str("up"),
+        KeyCode::Down => s.push_str("down"),
+        KeyCode::Left => s.push_str("left"),
+        KeyCode::Right => s.push_str("right"),
+        KeyCode::F(n) => s.push_str(&format!("f{}", n)),
+        _ => s.push_str("unknown"),
+    }
+
+    s
+}
+
 /// Main async TUI loop utilizing Tokio MPSC channels for non-blocking IO.
-pub async fn run(ledger: Ledger) -> Result<(), AppError> {
+pub async fn run(ledger: Ledger, settings: AppSettings) -> Result<(), AppError> {
     // Setup terminal
     enable_raw_mode()?;
     io::stdout().execute(EnterAlternateScreen)?;
@@ -127,7 +167,7 @@ pub async fn run(ledger: Ledger) -> Result<(), AppError> {
         }
     });
 
-    let mut app = App::new(ledger);
+    let mut app = App::new(ledger, settings.build_key_map());
 
     // Main render loop
     loop {
@@ -234,7 +274,7 @@ pub async fn run(ledger: Ledger) -> Result<(), AppError> {
                 }
             };
 
-            let footer = Paragraph::new("Arrows/Tab: Change Tab | 'v': View | 'e': Edit | 'q': Quit")
+            let footer = Paragraph::new("Arrows/HJKL/Tab: Navigate | 'v': View | 'e': Edit | 'q': Quit")
                 .alignment(Alignment::Left);
             f.render_widget(footer, layout[3]);
         })?;
@@ -253,4 +293,154 @@ pub async fn run(ledger: Ledger) -> Result<(), AppError> {
     disable_raw_mode()?;
     io::stdout().execute(LeaveAlternateScreen)?;
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crossterm::event::{KeyCode, KeyEvent, KeyEventKind, KeyEventState, KeyModifiers};
+    use gnucash_engine::domain::{Account, AccountType, DraftTransaction, Ledger, Split};
+    use gnucash_engine::domain::types::CommodityId;
+    use num_rational::Rational64;
+
+    fn make_key_event(code: KeyCode, modifiers: KeyModifiers) -> Event {
+        Event::Key(KeyEvent {
+            code,
+            modifiers,
+            kind: KeyEventKind::Press,
+            state: KeyEventState::empty(),
+        })
+    }
+
+    fn create_test_ledger() -> Ledger {
+        let commodity = CommodityId::new("USD");
+        let account1 = Account::new("Checking", AccountType::Bank, commodity.clone());
+        let account2 = Account::new("Groceries", AccountType::Expense, commodity.clone());
+
+        let split1 = Split::new(account1.id, Rational64::new(-100, 1));
+        let split2 = Split::new(account2.id, Rational64::new(100, 1));
+
+        let tx = DraftTransaction::new(commodity)
+            .add_split(split1)
+            .add_split(split2)
+            .validate()
+            .unwrap();
+
+        Ledger::new(vec![account1, account2], vec![tx])
+    }
+
+    fn get_app_with_defaults() -> App {
+        let ledger = create_test_ledger();
+        
+        let settings = AppSettings {
+            database_url: None,
+            keybindings: AppSettings::default_keybindings(),
+        };
+        
+        App::new(ledger, settings.build_key_map())
+    }
+
+    #[test]
+    fn test_quit_action() {
+        let mut app = get_app_with_defaults();
+        assert!(!app.should_quit);
+
+        app.update(make_key_event(KeyCode::Char('q'), KeyModifiers::empty()));
+        assert!(app.should_quit);
+    }
+
+    #[test]
+    fn test_quit_action_esc() {
+        let mut app = get_app_with_defaults();
+        assert!(!app.should_quit);
+
+        app.update(make_key_event(KeyCode::Esc, KeyModifiers::empty()));
+        assert!(app.should_quit);
+    }
+
+    #[test]
+    fn test_view_mode_action() {
+        let mut app = get_app_with_defaults();
+        app.state = AppState::Edit; // Start in Edit mode
+        
+        app.update(make_key_event(KeyCode::Char('v'), KeyModifiers::empty()));
+        assert!(matches!(app.state, AppState::View));
+    }
+
+    #[test]
+    fn test_edit_mode_action() {
+        let mut app = get_app_with_defaults();
+        assert!(matches!(app.state, AppState::View)); // Start in View mode
+        
+        app.update(make_key_event(KeyCode::Char('e'), KeyModifiers::empty()));
+        assert!(matches!(app.state, AppState::Edit));
+    }
+
+    #[test]
+    fn test_move_right_action() {
+        let mut app = get_app_with_defaults();
+        assert_eq!(app.tab_index, 0);
+
+        // 'l' should move right
+        app.update(make_key_event(KeyCode::Char('l'), KeyModifiers::empty()));
+        assert_eq!(app.tab_index, 1);
+
+        // 'right' should move right
+        app.update(make_key_event(KeyCode::Right, KeyModifiers::empty()));
+        assert_eq!(app.tab_index, 2);
+
+        // 'tab' should move right (FocusNext)
+        app.update(make_key_event(KeyCode::Tab, KeyModifiers::empty()));
+        assert_eq!(app.tab_index, 0); // Wraps around (2 active accounts + 1 overview = 3 tabs)
+    }
+
+    #[test]
+    fn test_move_left_action() {
+        let mut app = get_app_with_defaults();
+        assert_eq!(app.tab_index, 0);
+
+        // 'h' should move left (wrapping around to 2)
+        app.update(make_key_event(KeyCode::Char('h'), KeyModifiers::empty()));
+        assert_eq!(app.tab_index, 2);
+
+        // 'left' should move left
+        app.update(make_key_event(KeyCode::Left, KeyModifiers::empty()));
+        assert_eq!(app.tab_index, 1);
+
+        // 'backtab' should move left (FocusPrev)
+        app.update(make_key_event(KeyCode::BackTab, KeyModifiers::SHIFT));
+        assert_eq!(app.tab_index, 0);
+    }
+
+    #[test]
+    fn test_key_to_string() {
+        // Character keys
+        assert_eq!(key_to_string(&make_key_event(KeyCode::Char('q'), KeyModifiers::empty()).into_key()), "q");
+        assert_eq!(key_to_string(&make_key_event(KeyCode::Char('h'), KeyModifiers::empty()).into_key()), "h");
+        assert_eq!(key_to_string(&make_key_event(KeyCode::Char('j'), KeyModifiers::empty()).into_key()), "j");
+        assert_eq!(key_to_string(&make_key_event(KeyCode::Char('k'), KeyModifiers::empty()).into_key()), "k");
+        assert_eq!(key_to_string(&make_key_event(KeyCode::Char('l'), KeyModifiers::empty()).into_key()), "l");
+        assert_eq!(key_to_string(&make_key_event(KeyCode::Char(' '), KeyModifiers::empty()).into_key()), " ");
+        assert_eq!(key_to_string(&make_key_event(KeyCode::Char('/'), KeyModifiers::empty()).into_key()), "/");
+
+        // Control characters
+        assert_eq!(key_to_string(&make_key_event(KeyCode::Char('f'), KeyModifiers::CONTROL).into_key()), "ctrl-f");
+        assert_eq!(key_to_string(&make_key_event(KeyCode::Char('c'), KeyModifiers::CONTROL).into_key()), "ctrl-c");
+
+        // Special keys
+        assert_eq!(key_to_string(&make_key_event(KeyCode::Enter, KeyModifiers::empty()).into_key()), "enter");
+        assert_eq!(key_to_string(&make_key_event(KeyCode::Esc, KeyModifiers::empty()).into_key()), "esc");
+        assert_eq!(key_to_string(&make_key_event(KeyCode::Tab, KeyModifiers::empty()).into_key()), "tab");
+        assert_eq!(key_to_string(&make_key_event(KeyCode::BackTab, KeyModifiers::SHIFT).into_key()), "shift-backtab");
+        assert_eq!(key_to_string(&make_key_event(KeyCode::Up, KeyModifiers::empty()).into_key()), "up");
+        assert_eq!(key_to_string(&make_key_event(KeyCode::Down, KeyModifiers::empty()).into_key()), "down");
+        assert_eq!(key_to_string(&make_key_event(KeyCode::Left, KeyModifiers::empty()).into_key()), "left");
+        assert_eq!(key_to_string(&make_key_event(KeyCode::Right, KeyModifiers::empty()).into_key()), "right");
+    }
+
+    impl Event {
+        fn into_key(self) -> KeyEvent {
+            if let Event::Key(k) = self { k } else { unreachable!() }
+        }
+    }
 }

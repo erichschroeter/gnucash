@@ -66,7 +66,7 @@ async fn main() -> Result<()> {
             gnucash_engine::domain::Ledger::default()
         };
 
-        tui::run(ledger).await.context("Fatal error in interactive TUI loop")?;
+        tui::run(ledger, settings).await.context("Fatal error in interactive TUI loop")?;
     } else {
         log::info!("Running in foreground mode");
         println!("Gcash foreground executing...");
