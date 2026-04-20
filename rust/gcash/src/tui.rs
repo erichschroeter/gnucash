@@ -32,6 +32,7 @@ pub enum AppState {
     View,
     Edit,
     Search,
+    Help,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -132,6 +133,28 @@ impl App {
             if key.kind == KeyEventKind::Press {
                 let key_str = key_to_string(&key);
                 let action = self.key_map.get(&key_str).copied();
+
+                if self.state == AppState::Help {
+                    if key.code == KeyCode::Esc
+                        || key.code == KeyCode::Enter
+                        || key.code == KeyCode::Char('q')
+                        || key.code == KeyCode::Char('?')
+                    {
+                        self.state = AppState::View;
+                        return;
+                    }
+
+                    if let Some(act) = action {
+                        match act {
+                            Action::Quit | Action::ViewMode | Action::ShowHelp => {
+                                self.state = AppState::View;
+                                return;
+                            }
+                            _ => {}
+                        }
+                    }
+                    return;
+                }
 
                 if self.state == AppState::Edit {
                     if let Some(ref mut edit_state) = self.edit_state {
@@ -325,6 +348,7 @@ impl App {
                         Action::Quit => self.should_quit = true,
                         Action::ViewMode => self.state = AppState::View,
                         Action::Search => self.state = AppState::Search,
+                        Action::ShowHelp => self.state = AppState::Help,
                         Action::EditMode | Action::EditEntry => {
                             if self.state == AppState::View {
                                 if self.tab_index == 0 {
@@ -803,12 +827,49 @@ pub async fn run(ledger: Ledger, settings: AppSettings) -> Result<(), AppError> 
                         f.render_widget(content, layout[3]);
                     }
                 }
+                AppState::Help => {
+                    let mut action_map: HashMap<Action, Vec<String>> = HashMap::new();
+                    for (key, action) in &app.key_map {
+                        action_map.entry(*action).or_default().push(key.clone());
+                    }
+
+                    let mut rows = Vec::new();
+                    let mut sorted_actions: Vec<_> = action_map.keys().collect();
+                    sorted_actions.sort_by_key(|a| format!("{:?}", a));
+
+                    for action in sorted_actions {
+                        if let Some(keys) = action_map.get(action) {
+                            let mut sorted_keys = keys.clone();
+                            sorted_keys.sort();
+                            rows.push(Row::new(vec![
+                                Cell::from(format!("{:?}", action)),
+                                Cell::from(sorted_keys.join(", ")),
+                            ]));
+                        }
+                    }
+
+                    let table = Table::new(
+                        rows,
+                        [
+                            Constraint::Percentage(40),
+                            Constraint::Percentage(60),
+                        ],
+                    )
+                    .header(
+                        Row::new(vec!["Action", "Keys"]).style(
+                            ratatui::style::Style::default()
+                                .add_modifier(ratatui::style::Modifier::BOLD),
+                        ),
+                    )
+                    .block(Block::default().borders(Borders::ALL).title("Keyboard Shortcuts Cheat Sheet"))
+                    .column_spacing(2);
+
+                    f.render_widget(table, layout[3]);
+                }
             };
 
-            let footer = Paragraph::new(
-                "Arrows/HJKL/Tab: Navigate | '/': Search | 'v': View | 'enter': Open | 'i': Edit | 'q': Quit",
-            )
-            .alignment(Alignment::Left);
+            let footer = Paragraph::new("Press '?' for help | 'q' to quit")
+                .alignment(Alignment::Left);
             f.render_widget(footer, layout[4]);
         })?;
 
@@ -1243,6 +1304,29 @@ mod tests {
         // Shouldn't go past 0
         app.update(make_key_event(KeyCode::Char('k'), KeyModifiers::empty()));
         assert_eq!(app.table_state.selected(), Some(0));
+    }
+
+    #[test]
+    fn test_show_help_action() {
+        let mut app = get_app_with_defaults();
+        assert!(matches!(app.state, AppState::View));
+
+        // Pressing '?' should enter help mode
+        app.update(make_key_event(KeyCode::Char('?'), KeyModifiers::empty()));
+        assert!(matches!(app.state, AppState::Help));
+
+        // Pressing Esc should return to View
+        app.update(make_key_event(KeyCode::Esc, KeyModifiers::empty()));
+        assert!(matches!(app.state, AppState::View));
+
+        // Re-enter help
+        app.update(make_key_event(KeyCode::Char('?'), KeyModifiers::empty()));
+        assert!(matches!(app.state, AppState::Help));
+
+        // Pressing 'q' should return to View (not quit)
+        app.update(make_key_event(KeyCode::Char('q'), KeyModifiers::empty()));
+        assert!(matches!(app.state, AppState::View));
+        assert!(!app.should_quit);
     }
 
     #[test]

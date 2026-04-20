@@ -19,6 +19,7 @@ pub enum Action {
     FocusPrev,
     ToggleSplit,
     Search,
+    ShowHelp,
 }
 
 /// The central application configuration.
@@ -48,6 +49,7 @@ impl AppSettings {
         bindings.insert(Action::FocusPrev, vec!["shift-backtab".to_string()]);
         bindings.insert(Action::ToggleSplit, vec![" ".to_string()]);
         bindings.insert(Action::Search, vec!["/".to_string(), "ctrl-f".to_string()]);
+        bindings.insert(Action::ShowHelp, vec!["?".to_string()]);
         bindings
     }
 
