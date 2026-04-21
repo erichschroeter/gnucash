@@ -13,6 +13,12 @@ async fn main() -> Result<()> {
     // 1. Parse CLI arguments
     let cli = cli::Cli::parse();
 
+    // 1.5 Handle --default-config
+    if cli.default_config {
+        println!("{}", config::AppSettings::default_config_yaml());
+        return Ok(());
+    }
+
     // 2. Setup Logging: CLI --verbosity flag strictly overrides RUST_LOG
     let log_level = match cli.verbosity {
         cli::Verbosity::Debug => "debug",

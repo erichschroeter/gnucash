@@ -16,6 +16,10 @@ pub struct Cli {
     #[arg(short, long)]
     pub interactive: bool,
 
+    /// Output the default configuration file and exit.
+    #[arg(long)]
+    pub default_config: bool,
+
     /// Optional path to a .gnucash data file to load.
     #[arg(name = "FILE")]
     pub file: Option<String>,

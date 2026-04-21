@@ -13,6 +13,7 @@ clap = { version = "4", features = ["derive"] }
 # Configuration Management
 config = { version = "0.14", features = ["yaml"] }
 serde = { version = "1.0", features = ["derive"] }
+serde_yaml = "0.9"
 dirs = "5.0" # Used to locate OS-specific config directories like ~/.config
 
 # Logging

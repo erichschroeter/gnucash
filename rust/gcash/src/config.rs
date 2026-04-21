@@ -1,9 +1,9 @@
 use crate::error::AppError;
 use config::{Config, File, FileFormat};
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Deserialize, Serialize)]
 #[serde(rename_all = "snake_case")]
 pub enum Action {
     Quit,
@@ -23,11 +23,20 @@ pub enum Action {
 }
 
 /// The central application configuration.
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Deserialize, Serialize)]
 pub struct AppSettings {
     pub database_url: Option<String>,
     #[serde(default = "AppSettings::default_keybindings")]
     pub keybindings: HashMap<Action, Vec<String>>,
+}
+
+impl Default for AppSettings {
+    fn default() -> Self {
+        Self {
+            database_url: Some("sqlite://local.db".to_string()),
+            keybindings: Self::default_keybindings(),
+        }
+    }
 }
 
 impl AppSettings {
@@ -62,6 +71,11 @@ impl AppSettings {
             }
         }
         map
+    }
+
+    /// Returns the default configuration as a YAML string.
+    pub fn default_config_yaml() -> String {
+        serde_yaml::to_string(&Self::default()).unwrap_or_default()
     }
 }
 
@@ -149,5 +163,19 @@ mod tests {
             .expect("MoveLeft action not found");
         assert!(move_left_bindings.contains(&"h".to_string()));
         assert!(move_left_bindings.contains(&"left".to_string()));
+    }
+
+    #[test]
+    fn test_default_config_yaml() {
+        let yaml = AppSettings::default_config_yaml();
+        assert!(yaml.contains("database_url: sqlite://local.db"));
+        assert!(yaml.contains("keybindings:"));
+        assert!(yaml.contains("quit:"));
+
+        // Verify it can be parsed back
+        let settings: AppSettings =
+            serde_yaml::from_str(&yaml).expect("Failed to parse generated YAML");
+        assert_eq!(settings.database_url, Some("sqlite://local.db".to_string()));
+        assert!(settings.keybindings.contains_key(&Action::Quit));
     }
 }
