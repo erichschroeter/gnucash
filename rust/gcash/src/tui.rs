@@ -477,6 +477,12 @@ impl App {
                                 self.table_state.select(Some(max - 1));
                             }
                         }
+                        Action::MoveTop => {
+                            let max = self.current_row_count();
+                            if max > 0 {
+                                self.table_state.select(Some(0));
+                            }
+                        }
                         // Other actions not yet fully implemented in UI logic
                         _ => {}
                     }
@@ -1341,6 +1347,20 @@ mod tests {
 
         // max = 3. select index 2.
         assert_eq!(app.table_state.selected(), Some(2));
+    }
+
+    #[test]
+    fn test_move_top_action() {
+        let mut app = get_app_with_defaults();
+        assert_eq!(app.current_row_count(), 3);
+
+        // First move down so we aren't already at the top
+        app.table_state.select(Some(2));
+
+        // Press 'H' to move to top
+        app.update(make_key_event(KeyCode::Char('H'), KeyModifiers::SHIFT));
+
+        assert_eq!(app.table_state.selected(), Some(0));
     }
 
     #[test]

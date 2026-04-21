@@ -22,6 +22,7 @@ pub enum Action {
     ShowHelp,
     MoveMiddle,
     MoveBottom,
+    MoveTop,
 }
 
 /// The central application configuration.
@@ -63,6 +64,7 @@ impl AppSettings {
         bindings.insert(Action::ShowHelp, vec!["?".to_string()]);
         bindings.insert(Action::MoveMiddle, vec!["M".to_string()]);
         bindings.insert(Action::MoveBottom, vec!["L".to_string()]);
+        bindings.insert(Action::MoveTop, vec!["H".to_string()]);
         bindings
     }
 
