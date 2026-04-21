@@ -465,6 +465,12 @@ impl App {
                                 self.table_state.select(Some(i));
                             }
                         }
+                        Action::MoveMiddle => {
+                            let max = self.current_row_count();
+                            if max > 0 {
+                                self.table_state.select(Some(max / 2));
+                            }
+                        }
                         // Other actions not yet fully implemented in UI logic
                         _ => {}
                     }
@@ -538,7 +544,7 @@ pub fn key_to_string(key: &KeyEvent) -> String {
     }
 
     match key.code {
-        KeyCode::Char(c) => s.push(c.to_ascii_lowercase()),
+        KeyCode::Char(c) => s.push(c),
         KeyCode::Enter => s.push_str("enter"),
         KeyCode::Esc => s.push_str("esc"),
         KeyCode::Tab => s.push_str("tab"),
@@ -1308,6 +1314,18 @@ mod tests {
     }
 
     #[test]
+    fn test_move_middle_action() {
+        let mut app = get_app_with_defaults();
+        assert_eq!(app.current_row_count(), 3);
+
+        // Press 'M' to move to middle
+        app.update(make_key_event(KeyCode::Char('M'), KeyModifiers::SHIFT));
+
+        // max = 3. 3 / 2 = 1.
+        assert_eq!(app.table_state.selected(), Some(1));
+    }
+
+    #[test]
     fn test_show_help_action() {
         let mut app = get_app_with_defaults();
         assert!(matches!(app.state, AppState::View));
@@ -1360,6 +1378,16 @@ mod tests {
         assert_eq!(
             key_to_string(&make_key_event(KeyCode::Char('/'), KeyModifiers::empty()).into_key()),
             "/"
+        );
+
+        // Case sensitivity
+        assert_eq!(
+            key_to_string(&make_key_event(KeyCode::Char('m'), KeyModifiers::empty()).into_key()),
+            "m"
+        );
+        assert_eq!(
+            key_to_string(&make_key_event(KeyCode::Char('M'), KeyModifiers::SHIFT).into_key()),
+            "M"
         );
 
         // Control characters

@@ -20,6 +20,7 @@ pub enum Action {
     ToggleSplit,
     Search,
     ShowHelp,
+    MoveMiddle,
 }
 
 /// The central application configuration.
@@ -59,6 +60,7 @@ impl AppSettings {
         bindings.insert(Action::ToggleSplit, vec![" ".to_string()]);
         bindings.insert(Action::Search, vec!["/".to_string(), "ctrl-f".to_string()]);
         bindings.insert(Action::ShowHelp, vec!["?".to_string()]);
+        bindings.insert(Action::MoveMiddle, vec!["M".to_string()]);
         bindings
     }
 
