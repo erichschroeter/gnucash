@@ -645,6 +645,7 @@ dependencies = [
  "clap",
  "clap_complete",
  "config",
+ "criterion",
  "crossterm",
  "dirs",
  "env_logger",

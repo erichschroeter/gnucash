@@ -3,6 +3,13 @@ name = "gcash"
 version = "0.1.0"
 edition = "2021"
 
+[lib]
+path = "src/lib.rs"
+
+[[bin]]
+name = "gcash"
+path = "src/main.rs"
+
 [dependencies]
 # Async Runtime
 tokio = { version = "1", features = ["full"] }
@@ -38,5 +45,10 @@ chrono = "0.4.44"
 clap_complete = "4.6.2"
 
 [dev-dependencies]
+criterion = "0.8.2"
 tempfile = "3.10"
 unindent = "0.2"
+
+[[bench]]
+name = "tui_bench"
+harness = false

@@ -1,10 +1,8 @@
-mod cli;
-mod config;
-mod error;
-mod tui;
-
 use anyhow::{Context, Result};
 use clap::{CommandFactory, Parser};
+use gcash::cli;
+use gcash::config;
+use gcash::tui;
 use gnucash_engine::domain::{Ledger, Money};
 use std::env;
 

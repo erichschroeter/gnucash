@@ -21,13 +21,14 @@ use std::{
 use tokio::sync::mpsc;
 
 /// TUI events handled by the async event loop.
+#[derive(Clone, Copy, Debug)]
 pub enum Event {
     Tick,
     Key(event::KeyEvent),
 }
 
 /// Application view states for Model-View-Update architecture.
-#[derive(PartialEq, Eq)]
+#[derive(PartialEq, Eq, Clone, Copy, Debug)]
 pub enum AppState {
     View,
     Edit,
