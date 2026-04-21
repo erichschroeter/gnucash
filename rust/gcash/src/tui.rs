@@ -483,6 +483,12 @@ impl App {
                                 self.table_state.select(Some(0));
                             }
                         }
+                        Action::MoveEnd => {
+                            let max = self.current_row_count();
+                            if max > 0 {
+                                self.table_state.select(Some(max - 1));
+                            }
+                        }
                         // Other actions not yet fully implemented in UI logic
                         _ => {}
                     }
@@ -1361,6 +1367,17 @@ mod tests {
         app.update(make_key_event(KeyCode::Char('H'), KeyModifiers::SHIFT));
 
         assert_eq!(app.table_state.selected(), Some(0));
+    }
+
+    #[test]
+    fn test_move_end_action() {
+        let mut app = get_app_with_defaults();
+        assert_eq!(app.current_row_count(), 3);
+
+        // Press 'G' to move to end of list
+        app.update(make_key_event(KeyCode::Char('G'), KeyModifiers::SHIFT));
+
+        assert_eq!(app.table_state.selected(), Some(2));
     }
 
     #[test]
