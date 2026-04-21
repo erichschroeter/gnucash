@@ -5,11 +5,11 @@ use clap::{Parser, Subcommand, ValueEnum};
 #[command(version, about = "Gcash CLI Application", long_about = None)]
 pub struct Cli {
     /// Optional path to a YAML configuration file.
-    #[arg(short, long)]
+    #[arg(short, long, global = true)]
     pub config: Option<String>,
 
     /// Verbosity level for logging.
-    #[arg(short, long, value_enum, default_value_t = Verbosity::Info)]
+    #[arg(short, long, value_enum, default_value_t = Verbosity::Info, global = true)]
     pub verbosity: Verbosity,
 
     /// Enter the interactive terminal UI.
@@ -21,7 +21,7 @@ pub struct Cli {
     pub default_config: bool,
 
     /// Optional path to a .gnucash data file to load.
-    #[arg(name = "FILE")]
+    #[arg(short, long, global = true)]
     pub file: Option<String>,
 
     #[command(subcommand)]
@@ -35,6 +35,28 @@ pub enum Commands {
         /// Path to the .gnucash file.
         path: String,
     },
+    /// Manage accounts
+    Accounts {
+        #[command(subcommand)]
+        command: Option<AccountsCommands>,
+    },
+    /// Manage transactions
+    Transactions {
+        #[command(subcommand)]
+        command: Option<TransactionsCommands>,
+    },
+}
+
+#[derive(Subcommand, Debug)]
+pub enum AccountsCommands {
+    /// List all accounts
+    Ls,
+}
+
+#[derive(Subcommand, Debug)]
+pub enum TransactionsCommands {
+    /// List all transactions
+    Ls,
 }
 
 /// Allowed verbosity levels for the logger.

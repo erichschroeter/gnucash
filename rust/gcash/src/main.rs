@@ -5,7 +5,7 @@ mod tui;
 
 use anyhow::{Context, Result};
 use clap::Parser;
-use gnucash_engine::domain::Money;
+use gnucash_engine::domain::{Ledger, Money};
 use std::env;
 
 #[tokio::main]
@@ -53,6 +53,42 @@ async fn main() -> Result<()> {
                     }
                 }
             }
+            cli::Commands::Accounts { command } => {
+                let ledger = get_ledger(cli.file.as_ref(), &settings)?;
+                let command = command.unwrap_or(cli::AccountsCommands::Ls);
+                match command {
+                    cli::AccountsCommands::Ls => {
+                        println!("{:<40} {:<15} {:<10}", "Account Name", "Type", "ID");
+                        println!("{}", "-".repeat(65));
+                        for account in ledger.accounts {
+                            println!(
+                                "{:<40} {:<15} {:<10?}",
+                                account.name,
+                                format!("{:?}", account.account_type),
+                                account.id
+                            );
+                        }
+                    }
+                }
+            }
+            cli::Commands::Transactions { command } => {
+                let ledger = get_ledger(cli.file.as_ref(), &settings)?;
+                let command = command.unwrap_or(cli::TransactionsCommands::Ls);
+                match command {
+                    cli::TransactionsCommands::Ls => {
+                        println!("{:<12} {:<40} {:<10}", "Date", "Description", "ID");
+                        println!("{}", "-".repeat(65));
+                        for tx in ledger.transactions {
+                            println!(
+                                "{:<12} {:<40} {:<10?}",
+                                tx.date().format("%Y-%m-%d"),
+                                tx.description(),
+                                tx.id()
+                            );
+                        }
+                    }
+                }
+            }
         }
         return Ok(());
     }
@@ -60,17 +96,7 @@ async fn main() -> Result<()> {
     if cli.interactive {
         log::info!("Entering interactive mode");
 
-        let ledger = if let Some(path) = cli.file.as_ref() {
-            log::info!("Loading ledger from: {}", path);
-            gnucash_engine::persistence::xml::load_from_path(path)
-                .context(format!("Failed to load GnuCash file: {}", path))?
-        } else if let Some(url) = settings.database_url.as_ref() {
-            log::info!("Loading ledger from config database_url: {}", url);
-            gnucash_engine::persistence::xml::load_from_path(url)
-                .context(format!("Failed to load GnuCash file from config: {}", url))?
-        } else {
-            gnucash_engine::domain::Ledger::default()
-        };
+        let ledger = get_ledger(cli.file.as_ref(), &settings)?;
 
         tui::run(ledger, settings)
             .await
@@ -91,4 +117,19 @@ async fn main() -> Result<()> {
 
     log::info!("Shutdown complete.");
     Ok(())
+}
+
+fn get_ledger(file_path: Option<&String>, settings: &config::AppSettings) -> Result<Ledger> {
+    if let Some(path) = file_path {
+        log::info!("Loading ledger from: {}", path);
+        gnucash_engine::persistence::xml::load_from_path(path)
+            .context(format!("Failed to load GnuCash file: {}", path))
+    } else if let Some(url) = settings.database_url.as_ref() {
+        log::info!("Loading ledger from config database_url: {}", url);
+        gnucash_engine::persistence::xml::load_from_path(url)
+            .context(format!("Failed to load GnuCash file from config: {}", url))
+    } else {
+        log::info!("No file or database URL provided, using empty default ledger.");
+        Ok(gnucash_engine::domain::Ledger::default())
+    }
 }
