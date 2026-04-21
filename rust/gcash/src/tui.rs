@@ -471,6 +471,12 @@ impl App {
                                 self.table_state.select(Some(max / 2));
                             }
                         }
+                        Action::MoveBottom => {
+                            let max = self.current_row_count();
+                            if max > 0 {
+                                self.table_state.select(Some(max - 1));
+                            }
+                        }
                         // Other actions not yet fully implemented in UI logic
                         _ => {}
                     }
@@ -1323,6 +1329,18 @@ mod tests {
 
         // max = 3. 3 / 2 = 1.
         assert_eq!(app.table_state.selected(), Some(1));
+    }
+
+    #[test]
+    fn test_move_bottom_action() {
+        let mut app = get_app_with_defaults();
+        assert_eq!(app.current_row_count(), 3);
+
+        // Press 'L' to move to bottom
+        app.update(make_key_event(KeyCode::Char('L'), KeyModifiers::SHIFT));
+
+        // max = 3. select index 2.
+        assert_eq!(app.table_state.selected(), Some(2));
     }
 
     #[test]
