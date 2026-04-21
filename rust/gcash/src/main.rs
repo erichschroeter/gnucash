@@ -4,7 +4,7 @@ mod error;
 mod tui;
 
 use anyhow::{Context, Result};
-use clap::Parser;
+use clap::{CommandFactory, Parser};
 use gnucash_engine::domain::{Ledger, Money};
 use std::env;
 
@@ -88,6 +88,11 @@ async fn main() -> Result<()> {
                         }
                     }
                 }
+            }
+            cli::Commands::Completion { shell } => {
+                let mut cmd = cli::Cli::command();
+                let bin_name = cmd.get_name().to_string();
+                clap_complete::generate(shell, &mut cmd, bin_name, &mut std::io::stdout());
             }
         }
         return Ok(());

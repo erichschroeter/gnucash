@@ -45,6 +45,12 @@ pub enum Commands {
         #[command(subcommand)]
         command: Option<TransactionsCommands>,
     },
+    /// Generate shell completions
+    Completion {
+        /// Shell to generate completions for
+        #[arg(value_enum)]
+        shell: clap_complete::Shell,
+    },
 }
 
 #[derive(Subcommand, Debug)]
