@@ -60,6 +60,7 @@ pub struct App {
     pub key_map: HashMap<String, Action>,
     pub table_state: ratatui::widgets::TableState,
     pub search_query: String,
+    pub pending_keys: String,
 }
 
 impl App {
@@ -94,6 +95,7 @@ impl App {
             key_map,
             table_state,
             search_query: String::new(),
+            pending_keys: String::new(),
         }
     }
 
@@ -133,7 +135,51 @@ impl App {
             // Only trigger on key press down
             if key.kind == KeyEventKind::Press {
                 let key_str = key_to_string(&key);
-                let action = self.key_map.get(&key_str).copied();
+
+                // If in Search mode, handle keys directly and skip sequence logic
+                if self.state == AppState::Search {
+                    match key.code {
+                        KeyCode::Char(c) => self.search_query.push(c),
+                        KeyCode::Backspace => {
+                            self.search_query.pop();
+                        }
+                        KeyCode::Enter => self.state = AppState::View,
+                        KeyCode::Esc => {
+                            self.search_query.clear();
+                            self.state = AppState::View;
+                            self.table_state.select(Some(0));
+                        }
+                        _ => {}
+                    }
+                    // Reset selection when filtering changes
+                    let max = self.current_row_count();
+                    if let Some(i) = self.table_state.selected() {
+                        if max == 0 {
+                            self.table_state.select(None);
+                        } else if i >= max {
+                            self.table_state.select(Some(max - 1));
+                        }
+                    } else if max > 0 {
+                        self.table_state.select(Some(0));
+                    }
+                    return;
+                }
+
+                // Handle sequence logic for View and Help modes
+                self.pending_keys.push_str(&key_str);
+                let mut action = self.key_map.get(&self.pending_keys).copied();
+
+                if action.is_none() {
+                    let is_prefix = self.key_map.keys().any(|k| k.starts_with(&self.pending_keys));
+                    if !is_prefix {
+                        self.pending_keys = key_str.clone();
+                        action = self.key_map.get(&self.pending_keys).copied();
+                    }
+                }
+
+                if action.is_some() {
+                    self.pending_keys.clear();
+                }
 
                 if self.state == AppState::Help {
                     if key.code == KeyCode::Esc
@@ -142,6 +188,7 @@ impl App {
                         || key.code == KeyCode::Char('?')
                     {
                         self.state = AppState::View;
+                        self.pending_keys.clear();
                         return;
                     }
 
@@ -315,35 +362,6 @@ impl App {
                     return;
                 }
 
-                // If in search mode, capture raw typing instead of action map
-                if self.state == AppState::Search {
-                    match key.code {
-                        KeyCode::Char(c) => self.search_query.push(c),
-                        KeyCode::Backspace => {
-                            self.search_query.pop();
-                        }
-                        KeyCode::Enter => self.state = AppState::View,
-                        KeyCode::Esc => {
-                            self.search_query.clear();
-                            self.state = AppState::View;
-                            self.table_state.select(Some(0));
-                        }
-                        _ => {}
-                    }
-                    // Reset selection when filtering changes
-                    let max = self.current_row_count();
-                    if let Some(i) = self.table_state.selected() {
-                        if max == 0 {
-                            self.table_state.select(None);
-                        } else if i >= max {
-                            self.table_state.select(Some(max - 1));
-                        }
-                    } else if max > 0 {
-                        self.table_state.select(Some(0));
-                    }
-                    return;
-                }
-
                 if let Some(action) = action {
                     match action {
                         Action::Quit => self.should_quit = true,
@@ -487,6 +505,12 @@ impl App {
                             let max = self.current_row_count();
                             if max > 0 {
                                 self.table_state.select(Some(max - 1));
+                            }
+                        }
+                        Action::MoveStart => {
+                            let max = self.current_row_count();
+                            if max > 0 {
+                                self.table_state.select(Some(0));
                             }
                         }
                         // Other actions not yet fully implemented in UI logic
@@ -1378,6 +1402,23 @@ mod tests {
         app.update(make_key_event(KeyCode::Char('G'), KeyModifiers::SHIFT));
 
         assert_eq!(app.table_state.selected(), Some(2));
+    }
+
+    #[test]
+    fn test_move_start_action() {
+        let mut app = get_app_with_defaults();
+        assert_eq!(app.current_row_count(), 3);
+
+        // First move down
+        app.table_state.select(Some(2));
+
+        // Press 'g' then 'g'
+        app.update(make_key_event(KeyCode::Char('g'), KeyModifiers::empty()));
+        assert_eq!(app.pending_keys, "g");
+        app.update(make_key_event(KeyCode::Char('g'), KeyModifiers::empty()));
+        assert_eq!(app.pending_keys, "");
+
+        assert_eq!(app.table_state.selected(), Some(0));
     }
 
     #[test]

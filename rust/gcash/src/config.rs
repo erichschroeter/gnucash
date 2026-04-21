@@ -24,6 +24,7 @@ pub enum Action {
     MoveBottom,
     MoveTop,
     MoveEnd,
+    MoveStart,
 }
 
 /// The central application configuration.
@@ -67,6 +68,7 @@ impl AppSettings {
         bindings.insert(Action::MoveBottom, vec!["L".to_string()]);
         bindings.insert(Action::MoveTop, vec!["H".to_string()]);
         bindings.insert(Action::MoveEnd, vec!["G".to_string()]);
+        bindings.insert(Action::MoveStart, vec!["gg".to_string()]);
         bindings
     }
 
