@@ -65,13 +65,7 @@ pub struct App {
 
 impl App {
     pub fn new(ledger: Ledger, key_map: HashMap<String, Action>) -> Self {
-        let mut active_accounts = std::collections::HashSet::new();
-        for tx in &ledger.transactions {
-            for split in tx.splits() {
-                active_accounts.insert(split.account_id);
-            }
-        }
-        let mut active_accounts: Vec<AccountId> = active_accounts.into_iter().collect();
+        let mut active_accounts: Vec<AccountId> = ledger.accounts.iter().map(|a| a.id).collect();
         // Sort active accounts by name for consistent tab order
         active_accounts.sort_by_cached_key(|id| {
             ledger
@@ -196,7 +190,10 @@ impl App {
                         KeyCode::Backspace => {
                             self.search_query.pop();
                         }
-                        KeyCode::Enter => self.state = AppState::View,
+                        KeyCode::Enter => {
+                            self.state = AppState::View;
+                            self.open_selected_entry();
+                        }
                         KeyCode::Esc => {
                             self.search_query.clear();
                             self.state = AppState::View;
@@ -475,20 +472,7 @@ impl App {
                             }
                         }
                         Action::OpenEntry => {
-                            if self.state == AppState::View {
-                                if self.tab_index == 0 {
-                                    if let Some(acc_id) = self.get_selected_account() {
-                                        if let Some(index) =
-                                            self.active_accounts.iter().position(|id| *id == acc_id)
-                                        {
-                                            self.tab_index = index + 1;
-                                            self.table_state.select(Some(0));
-                                        }
-                                    }
-                                } else {
-                                    // TODO: Implement transaction view
-                                }
-                            }
+                            self.open_selected_entry();
                         }
                         Action::MoveRight | Action::FocusNext => {
                             let total_tabs = self.active_accounts.len() + 1;
@@ -619,6 +603,19 @@ impl App {
             }
         } else {
             None
+        }
+    }
+
+    fn open_selected_entry(&mut self) {
+        if self.tab_index == 0 {
+            if let Some(acc_id) = self.get_selected_account() {
+                if let Some(index) = self.active_accounts.iter().position(|id| *id == acc_id) {
+                    self.tab_index = index + 1;
+                    self.table_state.select(Some(0));
+                }
+            }
+        } else {
+            // TODO: Implement transaction view
         }
     }
 }
@@ -1137,6 +1134,24 @@ mod tests {
         app.update(make_key_event(KeyCode::Char('.'), KeyModifiers::empty()));
         app.update(make_key_event(KeyCode::Char('0'), KeyModifiers::empty()));
         assert_eq!(app.current_row_count(), 1); // Only Jimmy John's ($15.00)
+    }
+
+    #[test]
+    fn test_enter_in_search_opens_account() {
+        let mut app = get_app_with_defaults();
+        app.update(make_key_event(KeyCode::Char('/'), KeyModifiers::empty()));
+        app.update(make_key_event(KeyCode::Char('c'), KeyModifiers::empty())); // "che"
+        app.update(make_key_event(KeyCode::Char('h'), KeyModifiers::empty()));
+        app.update(make_key_event(KeyCode::Char('e'), KeyModifiers::empty()));
+
+        // Selection should be on "Checking" (index 0 of filtered list)
+        assert_eq!(app.table_state.selected(), Some(0));
+
+        // Press Enter
+        app.update(make_key_event(KeyCode::Enter, KeyModifiers::empty()));
+
+        // Should exit search AND navigate to Checking tab (index 1)
+        assert_eq!(app.tab_index, 1);
     }
 
     #[test]
