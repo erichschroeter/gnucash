@@ -61,6 +61,7 @@ pub struct App {
     pub table_state: ratatui::widgets::TableState,
     pub search_query: String,
     pub pending_keys: String,
+    pub tab_scroll_offset: usize,
 }
 
 impl App {
@@ -90,6 +91,7 @@ impl App {
             table_state,
             search_query: String::new(),
             pending_keys: String::new(),
+            tab_scroll_offset: 0,
         }
     }
 
@@ -719,16 +721,47 @@ pub async fn run(ledger: Ledger, settings: AppSettings) -> Result<(), AppError> 
             let title = Paragraph::new("Gcash Interactive").alignment(Alignment::Center);
             f.render_widget(title, layout[0]);
 
-            let mut tab_titles = vec!["Accounts Overview".to_string()];
-            tab_titles.extend(
+            let mut all_tab_titles = vec!["Accounts Overview".to_string()];
+            all_tab_titles.extend(
                 app.active_accounts
                     .iter()
                     .map(|id| app.get_account_name(id)),
             );
 
-            let tabs = Tabs::new(tab_titles)
+            // Determine visible window of tabs based on available width
+            let available_width = layout[1].width as usize - 2;
+            if app.tab_index < app.tab_scroll_offset {
+                app.tab_scroll_offset = app.tab_index;
+            }
+
+            let mut visible_titles = Vec::new();
+            loop {
+                visible_titles.clear();
+                let mut current_width = 0;
+                let mut selected_fits = false;
+
+                for (i, title) in all_tab_titles.iter().enumerate().skip(app.tab_scroll_offset) {
+                    // Estimated width: title length + divider (typically " | " which is 3 chars)
+                    let title_width = title.chars().count() + 3;
+                    if current_width + title_width > available_width {
+                        break;
+                    }
+                    visible_titles.push(title.clone());
+                    current_width += title_width;
+                    if i == app.tab_index {
+                        selected_fits = true;
+                    }
+                }
+
+                if selected_fits || app.tab_scroll_offset >= app.tab_index {
+                    break;
+                }
+                app.tab_scroll_offset += 1;
+            }
+
+            let tabs = Tabs::new(visible_titles)
                 .block(Block::default().borders(Borders::ALL).title("Accounts"))
-                .select(app.tab_index)
+                .select(app.tab_index - app.tab_scroll_offset)
                 .highlight_style(
                     ratatui::style::Style::default()
                         .add_modifier(ratatui::style::Modifier::BOLD)
@@ -1102,15 +1135,19 @@ mod tests {
         assert_eq!(app.search_query, "ch");
         assert_eq!(app.current_row_count(), 1);
 
-        // Pressing Enter should apply and exit search mode
+        // Pressing Enter should apply, exit search mode, AND navigate to the account tab
         app.update(make_key_event(KeyCode::Enter, KeyModifiers::empty()));
         assert!(matches!(app.state, AppState::View));
         assert_eq!(app.search_query, "ch"); // Query should remain
-        assert_eq!(app.current_row_count(), 1);
+        assert_eq!(app.tab_index, 1); // Navigated to Checking
 
         // Clear search for next part of test
         app.update(make_key_event(KeyCode::Char('/'), KeyModifiers::empty()));
         app.update(make_key_event(KeyCode::Esc, KeyModifiers::empty()));
+        assert_eq!(app.current_row_count(), 2); // Walmart, Jimmy John's in Checking
+
+        // Go back to overview
+        app.tab_index = 0;
         assert_eq!(app.current_row_count(), 3);
 
         // Switch to "Checking" tab
