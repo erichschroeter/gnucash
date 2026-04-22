@@ -5,7 +5,7 @@ use crossterm::{
     terminal::{disable_raw_mode, enable_raw_mode, EnterAlternateScreen, LeaveAlternateScreen},
     ExecutableCommand,
 };
-use gnucash_engine::domain::{AccountId, Ledger};
+use gnucash_engine::domain::{Account, AccountId, Ledger, Transaction};
 use num_traits::ToPrimitive;
 use ratatui::{
     backend::CrosstermBackend,
@@ -99,15 +99,68 @@ impl App {
         }
     }
 
-    fn account_has_matching_transaction(&self, account_id: &AccountId, query: &str) -> bool {
+    fn account_matches_query(&self, account: &Account, query: &str) -> bool {
         if query.is_empty() {
             return true;
         }
-        self.ledger
-            .transactions
+        account.name.to_lowercase().contains(query)
+            || format!("{:?}", account.account_type)
+                .to_lowercase()
+                .contains(query)
+            || format!("{:?}", account.id).to_lowercase().contains(query)
+    }
+
+    fn transaction_matches_query(
+        &self,
+        tx: &Transaction,
+        active_id: &AccountId,
+        query: &str,
+    ) -> bool {
+        if query.is_empty() {
+            return true;
+        }
+        // Date
+        if tx
+            .date()
+            .format("%Y-%m-%d")
+            .to_string()
+            .to_lowercase()
+            .contains(query)
+        {
+            return true;
+        }
+        // Description
+        if tx.description().to_lowercase().contains(query) {
+            return true;
+        }
+        // Transfer
+        let other_splits: Vec<_> = tx
+            .splits()
             .iter()
-            .filter(|tx| tx.splits().iter().any(|s| s.account_id == *account_id))
-            .any(|tx| tx.description().to_lowercase().contains(query))
+            .filter(|s| s.account_id != *active_id)
+            .collect();
+        let transfer = if other_splits.len() == 1 {
+            self.get_account_name(&other_splits[0].account_id)
+        } else if other_splits.len() > 1 {
+            "-- Split --".to_string()
+        } else {
+            "None".to_string()
+        };
+        if transfer.to_lowercase().contains(query) {
+            return true;
+        }
+        // Amount
+        let active_split = tx
+            .splits()
+            .iter()
+            .find(|s| s.account_id == *active_id)
+            .unwrap();
+        let amount_val = format!("{:.2}", active_split.amount.to_f64().unwrap_or(0.0));
+        if amount_val.contains(query) {
+            return true;
+        }
+
+        false
     }
 
     fn current_row_count(&self) -> usize {
@@ -116,7 +169,7 @@ impl App {
             self.ledger
                 .accounts
                 .iter()
-                .filter(|a| self.account_has_matching_transaction(&a.id, &query))
+                .filter(|a| self.account_matches_query(a, &query))
                 .count()
         } else {
             let active_id = self.active_accounts[self.tab_index - 1];
@@ -124,7 +177,7 @@ impl App {
                 .transactions
                 .iter()
                 .filter(|tx| tx.splits().iter().any(|s| s.account_id == active_id))
-                .filter(|tx| query.is_empty() || tx.description().to_lowercase().contains(&query))
+                .filter(|tx| self.transaction_matches_query(tx, &active_id, &query))
                 .count()
         }
     }
@@ -537,7 +590,7 @@ impl App {
                 .ledger
                 .accounts
                 .iter()
-                .filter(|a| self.account_has_matching_transaction(&a.id, &query));
+                .filter(|a| self.account_matches_query(a, &query));
             if let Some(i) = self.table_state.selected() {
                 iter.nth(i).map(|a| a.id)
             } else {
@@ -710,7 +763,7 @@ pub async fn run(ledger: Ledger, settings: AppSettings) -> Result<(), AppError> 
                             .ledger
                             .accounts
                             .iter()
-                            .filter(|a| app.account_has_matching_transaction(&a.id, &query))
+                            .filter(|a| app.account_matches_query(a, &query))
                             .map(|acc| {
                                 Row::new(vec![
                                     Cell::from(acc.name.clone()),
@@ -751,9 +804,7 @@ pub async fn run(ledger: Ledger, settings: AppSettings) -> Result<(), AppError> 
                             .transactions
                             .iter()
                             .filter(|tx| tx.splits().iter().any(|s| s.account_id == active_id))
-                            .filter(|tx| {
-                                query.is_empty() || tx.description().to_lowercase().contains(&query)
-                            })
+                            .filter(|tx| app.transaction_matches_query(tx, &active_id, &query))
                             .map(|tx| {
                                 let date = tx.date().format("%Y-%m-%d").to_string();
                                 let desc = tx.description().to_string();
@@ -1041,25 +1092,51 @@ mod tests {
         assert!(matches!(app.state, AppState::Search));
 
         // Typing characters should append to search_query
-        app.update(make_key_event(KeyCode::Char('j'), KeyModifiers::empty()));
-        app.update(make_key_event(KeyCode::Char('i'), KeyModifiers::empty()));
-        app.update(make_key_event(KeyCode::Char('m'), KeyModifiers::empty()));
-        assert_eq!(app.search_query, "jim");
+        app.update(make_key_event(KeyCode::Char('c'), KeyModifiers::empty()));
+        app.update(make_key_event(KeyCode::Char('h'), KeyModifiers::empty()));
+        app.update(make_key_event(KeyCode::Char('e'), KeyModifiers::empty()));
+        assert_eq!(app.search_query, "che");
 
-        // The query "jim" should match Jimmy John's, which is associated with Checking and Dining.
-        // Groceries should be filtered out.
-        assert_eq!(app.current_row_count(), 2);
+        // The query "che" should match "Checking".
+        assert_eq!(app.current_row_count(), 1);
 
         // Backspace should remove characters
         app.update(make_key_event(KeyCode::Backspace, KeyModifiers::empty()));
-        assert_eq!(app.search_query, "ji");
-        assert_eq!(app.current_row_count(), 2);
+        assert_eq!(app.search_query, "ch");
+        assert_eq!(app.current_row_count(), 1);
 
         // Pressing Enter should apply and exit search mode
         app.update(make_key_event(KeyCode::Enter, KeyModifiers::empty()));
         assert!(matches!(app.state, AppState::View));
-        assert_eq!(app.search_query, "ji"); // Query should remain
-        assert_eq!(app.current_row_count(), 2);
+        assert_eq!(app.search_query, "ch"); // Query should remain
+        assert_eq!(app.current_row_count(), 1);
+
+        // Clear search for next part of test
+        app.update(make_key_event(KeyCode::Char('/'), KeyModifiers::empty()));
+        app.update(make_key_event(KeyCode::Esc, KeyModifiers::empty()));
+        assert_eq!(app.current_row_count(), 3);
+
+        // Switch to "Checking" tab
+        app.update(make_key_event(KeyCode::Tab, KeyModifiers::empty()));
+        assert_eq!(app.tab_index, 1);
+        assert_eq!(app.current_row_count(), 2); // Walmart, Jimmy John's
+
+        // Search for "wal"
+        app.update(make_key_event(KeyCode::Char('/'), KeyModifiers::empty()));
+        app.update(make_key_event(KeyCode::Char('w'), KeyModifiers::empty()));
+        app.update(make_key_event(KeyCode::Char('a'), KeyModifiers::empty()));
+        app.update(make_key_event(KeyCode::Char('l'), KeyModifiers::empty()));
+        assert_eq!(app.current_row_count(), 1); // Only Walmart
+
+        // Search for "15.00" (Amount)
+        app.update(make_key_event(KeyCode::Backspace, KeyModifiers::empty()));
+        app.update(make_key_event(KeyCode::Backspace, KeyModifiers::empty()));
+        app.update(make_key_event(KeyCode::Backspace, KeyModifiers::empty()));
+        app.update(make_key_event(KeyCode::Char('1'), KeyModifiers::empty()));
+        app.update(make_key_event(KeyCode::Char('5'), KeyModifiers::empty()));
+        app.update(make_key_event(KeyCode::Char('.'), KeyModifiers::empty()));
+        app.update(make_key_event(KeyCode::Char('0'), KeyModifiers::empty()));
+        assert_eq!(app.current_row_count(), 1); // Only Jimmy John's ($15.00)
     }
 
     #[test]
