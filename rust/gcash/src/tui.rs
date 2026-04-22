@@ -62,6 +62,7 @@ pub struct App {
     pub search_query: String,
     pub pending_keys: String,
     pub tab_scroll_offset: usize,
+    pub transaction_counts: HashMap<AccountId, usize>,
 }
 
 impl App {
@@ -80,6 +81,17 @@ impl App {
         let mut table_state = ratatui::widgets::TableState::default();
         table_state.select(Some(0));
 
+        let mut transaction_counts = HashMap::new();
+        for tx in &ledger.transactions {
+            let mut accounts_in_tx = std::collections::HashSet::new();
+            for split in tx.splits() {
+                accounts_in_tx.insert(split.account_id);
+            }
+            for acc_id in accounts_in_tx {
+                *transaction_counts.entry(acc_id).or_insert(0) += 1;
+            }
+        }
+
         Self {
             state: AppState::View,
             edit_state: None,
@@ -92,6 +104,7 @@ impl App {
             search_query: String::new(),
             pending_keys: String::new(),
             tab_scroll_offset: 0,
+            transaction_counts,
         }
     }
 
@@ -99,11 +112,12 @@ impl App {
         if query.is_empty() {
             return true;
         }
+        let tx_count = self.transaction_counts.get(&account.id).unwrap_or(&0);
         account.name.to_lowercase().contains(query)
             || format!("{:?}", account.account_type)
                 .to_lowercase()
                 .contains(query)
-            || format!("{:?}", account.id).to_lowercase().contains(query)
+            || tx_count.to_string().contains(query)
     }
 
     fn transaction_matches_query(
@@ -795,9 +809,11 @@ pub async fn run(ledger: Ledger, settings: AppSettings) -> Result<(), AppError> 
                             .iter()
                             .filter(|a| app.account_matches_query(a, &query))
                             .map(|acc| {
+                                let tx_count = app.transaction_counts.get(&acc.id).unwrap_or(&0);
                                 Row::new(vec![
                                     Cell::from(acc.name.clone()),
                                     Cell::from(format!("{:?}", acc.account_type)),
+                                    Cell::from(tx_count.to_string()),
                                 ])
                             })
                             .collect();
@@ -805,12 +821,13 @@ pub async fn run(ledger: Ledger, settings: AppSettings) -> Result<(), AppError> 
                         let table = Table::new(
                             rows,
                             [
-                                Constraint::Percentage(60),
-                                Constraint::Percentage(40),
+                                Constraint::Percentage(50),
+                                Constraint::Percentage(30),
+                                Constraint::Percentage(20),
                             ],
                         )
                         .header(
-                            Row::new(vec!["Name", "Type"]).style(
+                            Row::new(vec!["Name", "Type", "Transactions"]).style(
                                 ratatui::style::Style::default()
                                     .add_modifier(ratatui::style::Modifier::BOLD),
                             ),
