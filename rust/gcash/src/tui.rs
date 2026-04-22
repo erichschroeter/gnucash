@@ -798,7 +798,6 @@ pub async fn run(ledger: Ledger, settings: AppSettings) -> Result<(), AppError> 
                                 Row::new(vec![
                                     Cell::from(acc.name.clone()),
                                     Cell::from(format!("{:?}", acc.account_type)),
-                                    Cell::from(format!("{:?}", acc.id)),
                                 ])
                             })
                             .collect();
@@ -806,13 +805,12 @@ pub async fn run(ledger: Ledger, settings: AppSettings) -> Result<(), AppError> 
                         let table = Table::new(
                             rows,
                             [
-                                Constraint::Percentage(40),
-                                Constraint::Percentage(20),
+                                Constraint::Percentage(60),
                                 Constraint::Percentage(40),
                             ],
                         )
                         .header(
-                            Row::new(vec!["Name", "Type", "ID"]).style(
+                            Row::new(vec!["Name", "Type"]).style(
                                 ratatui::style::Style::default()
                                     .add_modifier(ratatui::style::Modifier::BOLD),
                             ),
